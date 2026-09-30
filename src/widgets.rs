@@ -25,7 +25,7 @@ use fltk::valuator::HorSlider;
 
 use crate::element::{relayout_parent, Ctx, Element};
 use crate::hover::is_hovered;
-use crate::theme::ROUNDED;
+use crate::theme::{Theme, ROUNDED};
 
 fn text_frame<S: 'static, M: 'static>(ctx: &Ctx<S, M>, size_delta: i32, dim: bool) -> Frame {
     let t = ctx.theme();
@@ -521,6 +521,98 @@ pub fn progress<S: 'static, M: 'static>(value: impl Fn(&S) -> f64 + 'static) -> 
             let v = value(s).clamp(0.0, 1.0);
             if (frac.get() - v).abs() > 0.001 {
                 frac.set(v);
+                w.redraw();
+            }
+        });
+        f.as_base_widget()
+    })
+}
+
+/// Custom drawing driven by state, for meters, charts, clocks.
+/// `data(state)` picks what the drawing depends on; only when it changes
+/// is the canvas redrawn, by `paint(&data, x, y, w, h, &theme)` using
+/// `fltk::draw`. Keep `D` small (numbers, a short Vec): it's computed and
+/// compared after every update.
+pub fn canvas<S: 'static, M: 'static, D: PartialEq + 'static>(
+    data: impl Fn(&S) -> D + 'static,
+    paint: impl Fn(&D, i32, i32, i32, i32, &Theme) + 'static,
+) -> Element<S, M> {
+    Element::new(move |ctx| {
+        let t = ctx.theme_rc();
+        let cur: Rc<RefCell<Option<D>>> = Rc::default();
+        let mut f = Frame::default();
+        f.set_frame(FrameType::NoBox);
+        {
+            let cur = cur.clone();
+            f.draw(move |f| {
+                if let Some(d) = cur.borrow().as_ref() {
+                    draw::push_clip(f.x(), f.y(), f.w(), f.h());
+                    paint(d, f.x(), f.y(), f.w(), f.h(), &t);
+                    draw::pop_clip();
+                }
+            });
+        }
+        let mut w = f.clone();
+        ctx.bind(move |s| {
+            let d = data(s);
+            let mut cur = cur.borrow_mut();
+            if cur.as_ref() != Some(&d) {
+                *cur = Some(d);
+                repaint(&mut w);
+            }
+        });
+        f.as_base_widget()
+    })
+}
+
+/// A filled line graph of `values(state)` (oldest first), scaled to
+/// `0..=max`: CPU/network history and the like. The copy it keeps is
+/// reused, so steady updates don't allocate.
+pub fn graph<S: 'static, M: 'static>(values: impl Fn(&S) -> &[f64] + 'static, max: f64) -> Element<S, M> {
+    Element::new(move |ctx| {
+        let t = ctx.theme_rc();
+        let cur: Rc<RefCell<Vec<f64>>> = Rc::default();
+        let mut f = Frame::default();
+        f.set_frame(FrameType::NoBox);
+        {
+            let cur = cur.clone();
+            f.draw(move |f| {
+                let (x, y, w, h) = (f.x(), f.y(), f.w(), f.h());
+                draw::set_draw_color(t.surface_alt);
+                draw::draw_rounded_rectf(x, y, w, h, t.radius.min(h / 2).min(6));
+                let v = cur.borrow();
+                if v.len() < 2 || w < 2 {
+                    return;
+                }
+                let px = |i: usize| x as f64 + i as f64 * (w - 1) as f64 / (v.len() - 1) as f64;
+                let py = |val: f64| (y + h - 1) as f64 - (val / max).clamp(0.0, 1.0) * (h - 2) as f64;
+                draw::push_clip(x, y, w, h);
+                draw::set_draw_color(mix(t.accent, t.surface_alt, 0.7));
+                draw::begin_complex_polygon();
+                draw::vertex(x as f64, (y + h) as f64);
+                for (i, &val) in v.iter().enumerate() {
+                    draw::vertex(px(i), py(val));
+                }
+                draw::vertex((x + w - 1) as f64, (y + h) as f64);
+                draw::end_complex_polygon();
+                draw::set_draw_color(t.accent);
+                draw::set_line_style(LineStyle::Solid | LineStyle::CapRound | LineStyle::JoinRound, 2);
+                draw::begin_line();
+                for (i, &val) in v.iter().enumerate() {
+                    draw::vertex(px(i), py(val));
+                }
+                draw::end_line();
+                draw::set_line_style(LineStyle::Solid, 0);
+                draw::pop_clip();
+            });
+        }
+        let mut w = f.clone();
+        ctx.bind(move |s| {
+            let new = values(s);
+            let mut cur = cur.borrow_mut();
+            if cur.as_slice() != new {
+                cur.clear();
+                cur.extend_from_slice(new);
                 w.redraw();
             }
         });

@@ -46,6 +46,8 @@ mod popup;
 mod task;
 pub mod theme;
 pub mod widgets;
+#[cfg(all(unix, not(target_os = "macos"), not(feature = "wayland")))]
+mod x11;
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -62,7 +64,7 @@ pub use theme::Theme;
 
 pub mod prelude {
     pub use crate::widgets::*;
-    pub use crate::{embed, App, Ctx, Element, Settings, Subscription, Task, Theme};
+    pub use crate::{embed, App, Ctx, Edge, Element, Settings, Subscription, Task, Theme, WindowKind};
 }
 
 /// An application: its state is `Self`.
@@ -106,6 +108,46 @@ pub struct Settings {
     pub decorated: bool,
     /// Window class, used by compositors/WMs for rules.
     pub class: Option<String>,
+    /// What the window is for; tells the window manager how to treat it.
+    pub kind: WindowKind,
+    /// Keep above normal windows (OSDs, popups).
+    pub above: bool,
+    /// Keep below normal windows (desktop widgets).
+    pub below: bool,
+    /// Show on every workspace.
+    pub sticky: bool,
+    /// Leave out of taskbars and pagers.
+    pub skip_taskbar: bool,
+    /// Reserve screen space along an edge so maximized windows don't cover
+    /// this one (panels, docks).
+    pub reserve: Option<(Edge, i32)>,
+}
+
+/// Window types from the EWMH spec. On X11 (and XWayland compositors that
+/// honor it) the window manager places, stacks and decorates by this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WindowKind {
+    #[default]
+    Normal,
+    /// Panels, docks, taskbars: undecorated, not focused on click, above
+    /// normal windows. Combine with [`Settings::reserve`].
+    Dock,
+    /// Desktop widgets (conky-like): kept below everything, no taskbar entry.
+    Desktop,
+    Dialog,
+    /// Tool palettes and small helper windows.
+    Utility,
+    /// Notifications and OSDs.
+    Notification,
+}
+
+/// A screen edge, for [`Settings::reserve`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Edge {
+    Top,
+    Bottom,
+    Left,
+    Right,
 }
 
 impl Settings {
@@ -117,7 +159,47 @@ impl Settings {
             resizable: true,
             decorated: true,
             class: None,
+            kind: WindowKind::Normal,
+            above: false,
+            below: false,
+            sticky: false,
+            skip_taskbar: false,
+            reserve: None,
         }
+    }
+
+    /// A panel/dock along `edge` of the primary screen, `thickness` px
+    /// deep: borderless, fixed size, on every workspace, space reserved.
+    pub fn panel(title: &str, edge: Edge, thickness: i32) -> Self {
+        let (sx, sy, sw, sh) = fltk::app::screen_xywh(0);
+        let (x, y, w, h) = match edge {
+            Edge::Top => (sx, sy, sw, thickness),
+            Edge::Bottom => (sx, sy + sh - thickness, sw, thickness),
+            Edge::Left => (sx, sy, thickness, sh),
+            Edge::Right => (sx + sw - thickness, sy, thickness, sh),
+        };
+        Self::new(title)
+            .size(w, h)
+            .position(x, y)
+            .resizable(false)
+            .decorated(false)
+            .kind(WindowKind::Dock)
+            .sticky(true)
+            .reserve(edge, thickness)
+    }
+
+    /// A desktop widget (conky-like) at `x, y`: borderless, below other
+    /// windows, on every workspace, not in the taskbar.
+    pub fn desktop_widget(title: &str, x: i32, y: i32, w: i32, h: i32) -> Self {
+        Self::new(title)
+            .size(w, h)
+            .position(x, y)
+            .resizable(false)
+            .decorated(false)
+            .kind(WindowKind::Desktop)
+            .below(true)
+            .sticky(true)
+            .skip_taskbar(true)
     }
     pub fn size(mut self, w: i32, h: i32) -> Self {
         self.size = (w, h);
@@ -137,6 +219,30 @@ impl Settings {
     }
     pub fn class(mut self, class: &str) -> Self {
         self.class = Some(class.to_string());
+        self
+    }
+    pub fn kind(mut self, kind: WindowKind) -> Self {
+        self.kind = kind;
+        self
+    }
+    pub fn above(mut self, on: bool) -> Self {
+        self.above = on;
+        self
+    }
+    pub fn below(mut self, on: bool) -> Self {
+        self.below = on;
+        self
+    }
+    pub fn sticky(mut self, on: bool) -> Self {
+        self.sticky = on;
+        self
+    }
+    pub fn skip_taskbar(mut self, on: bool) -> Self {
+        self.skip_taskbar = on;
+        self
+    }
+    pub fn reserve(mut self, edge: Edge, px: i32) -> Self {
+        self.reserve = Some((edge, px));
         self
     }
 }
@@ -205,6 +311,10 @@ pub fn run<A: App>(mut app: A, settings: Settings) -> Result<(), fltk::prelude::
         b(&app);
     }
     win.show();
+    #[cfg(all(unix, not(target_os = "macos"), not(feature = "wayland")))]
+    if x11::needed(&settings) {
+        x11::apply(&win, &settings);
+    }
 
     while fl.wait() {
         let mut changed = false;

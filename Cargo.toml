@@ -13,6 +13,9 @@ fltk-sys = "1.5"
 
 [features]
 default = []
+# Native Wayland backend (FLTK hybrid build). Window hints for panels and
+# desktop widgets are X11-only for now and are skipped in this build.
+wayland = ["fltk/use-wayland"]
 # Task::future on a single shared current-thread runtime.
 tokio = ["dep:tokio"]
 
