@@ -54,6 +54,33 @@ impl<M> Task<M> {
     }
 }
 
+impl<M: Send + 'static> Task<M> {
+    /// Converts a component's task into its parent's, the same way `embed`
+    /// converts its messages:
+    /// `Msg::Volume(m) => self.volume.update(m).map(Msg::Volume)`.
+    pub fn map<N>(self, f: impl Fn(M) -> N + Send + Sync + 'static) -> Task<N> {
+        let f = std::sync::Arc::new(f);
+        Task(
+            self.0
+                .into_iter()
+                .map(|action| match action {
+                    Action::Message(m) => Action::Message(f(m)),
+                    Action::Quit => Action::Quit,
+                    Action::Thread(work) => {
+                        let f = f.clone();
+                        Action::Thread(Box::new(move || f(work())))
+                    }
+                    #[cfg(feature = "tokio")]
+                    Action::Future(fut) => {
+                        let f = f.clone();
+                        Action::Future(Box::pin(async move { f(fut.await) }))
+                    }
+                })
+                .collect(),
+        )
+    }
+}
+
 impl<M> Default for Task<M> {
     fn default() -> Self {
         Self::none()
@@ -69,6 +96,57 @@ pub enum Subscription<M> {
 impl<M> Subscription<M> {
     pub fn every(interval: Duration, msg: M) -> Self {
         Self::Every(interval, msg)
+    }
+
+    /// Converts a component's subscription into its parent's.
+    pub fn map<N>(self, f: impl Fn(M) -> N) -> Subscription<N> {
+        match self {
+            Self::Every(interval, msg) => Subscription::Every(interval, f(msg)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, PartialEq)]
+    enum Child {
+        A(u8),
+    }
+    #[derive(Debug, PartialEq)]
+    enum Parent {
+        Child(Child),
+    }
+
+    #[test]
+    fn map_wraps_every_action() {
+        let task = Task::batch([
+            Task::message(Child::A(1)),
+            Task::perform(|| Child::A(2)),
+            Task::quit(),
+        ])
+        .map(Parent::Child);
+        let mut out = Vec::new();
+        for action in task.0 {
+            match action {
+                Action::Message(m) => out.push(Some(m)),
+                Action::Thread(work) => out.push(Some(work())),
+                Action::Quit => out.push(None),
+                #[cfg(feature = "tokio")]
+                Action::Future(_) => unreachable!(),
+            }
+        }
+        assert_eq!(
+            out,
+            [Some(Parent::Child(Child::A(1))), Some(Parent::Child(Child::A(2))), None]
+        );
+    }
+
+    #[test]
+    fn subscription_map() {
+        let Subscription::Every(d, m) = Subscription::every(Duration::from_secs(1), Child::A(3)).map(Parent::Child);
+        assert_eq!((d, m), (Duration::from_secs(1), Parent::Child(Child::A(3))));
     }
 }
 
