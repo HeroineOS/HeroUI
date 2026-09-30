@@ -53,7 +53,7 @@ use std::sync::mpsc;
 use fltk::prelude::*;
 use fltk::window::Window;
 
-pub use element::{embed, Binding, Ctx, Element};
+pub use element::{embed, relayout_parent, Binding, Ctx, Element};
 pub use fltk;
 pub use task::{Subscription, Task};
 pub use theme::Theme;

@@ -89,17 +89,11 @@ fn flex<S: 'static, M: 'static>(
 ) -> Element<S, M> {
     Element::new(move |ctx| {
         let mut flex = Flex::default();
+        flex.end();
         flex.set_type(if column { fltk::group::FlexType::Column } else { fltk::group::FlexType::Row });
         flex.set_margin(0);
         flex.set_pad(ctx.theme().spacing);
-        for child in children {
-            let fixed = child.fixed_size();
-            let w = child.build(ctx);
-            if let Some(px) = fixed {
-                flex.fixed(&w, px);
-            }
-        }
-        flex.end();
+        ctx.build_children(&mut flex, children);
         flex.as_base_widget()
     })
 }
@@ -119,24 +113,18 @@ pub fn card<S: 'static, M: 'static>(children: Vec<Element<S, M>>) -> Element<S, 
     Element::new(move |ctx| {
         let t = ctx.theme();
         let mut flex = Flex::default().column();
+        flex.end();
         flex.set_frame(ROUNDED);
         flex.set_color(t.surface);
         flex.set_margin(t.padding);
         flex.set_pad(t.spacing);
-        for child in children {
-            let fixed = child.fixed_size();
-            let w = child.build(ctx);
-            if let Some(px) = fixed {
-                flex.fixed(&w, px);
-            }
-        }
-        flex.end();
+        ctx.build_children(&mut flex, children);
         flex.as_base_widget()
     })
 }
 
 /// A column whose items are rebuilt when `count` changes. `item(i)` builds
-/// the element for index `i`; its bindings read `state.items[i]` etc.
+/// the element for index `i`; its bindings read `state.items.get(i)` etc.
 /// Give items a `.fixed(px)` height or they share the list's space.
 pub fn list<S: 'static, M: 'static>(
     count: impl Fn(&S) -> usize + 'static,
@@ -175,18 +163,10 @@ impl<S: 'static, M: 'static> ListState<S, M> {
         let template = self.ctx.take().expect("list context");
         let mut ctx = template.child();
         self.flex.clear();
-        self.flex.begin();
-        for i in 0..n {
-            let el = item(i);
-            let fixed = el.fixed_size();
-            let w = el.build(&mut ctx);
-            if let Some(px) = fixed {
-                self.flex.fixed(&w, px);
-            }
-        }
-        // Keep items packed at the top instead of stretched over the list.
-        Frame::default();
-        self.flex.end();
+        // The trailing spacer keeps items packed at the top instead of
+        // stretched over the list.
+        let children = (0..n).map(item).chain(std::iter::once(spacer())).collect();
+        ctx.build_children(&mut self.flex, children);
         self.bindings = ctx.into_bindings();
         self.ctx = Some(template);
         self.len = Some(n);

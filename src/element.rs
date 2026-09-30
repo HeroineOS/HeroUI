@@ -50,12 +50,31 @@ impl<S: 'static, M: 'static> Ctx<S, M> {
         self.theme.clone()
     }
 
-    /// A context for a sub-tree with its own bindings (used by `list`).
-    pub(crate) fn child(&self) -> Ctx<S, M> {
+    /// Builds `children` into `flex`, in order, applying each child's
+    /// `.fixed()`. `flex` is begun and ended here. This is all a container
+    /// element needs: create a `Flex` (or anything derived from it), style
+    /// it, call this, return it.
+    pub fn build_children(&mut self, flex: &mut Flex, children: Vec<Element<S, M>>) {
+        flex.begin();
+        for child in children {
+            let fixed = child.fixed_size();
+            let w = child.build(self);
+            if let Some(px) = fixed {
+                flex.fixed(&w, px);
+            }
+        }
+        flex.end();
+    }
+
+    /// A fresh context sharing this one's emitter and theme but with no
+    /// bindings. For containers that rebuild their children (see `list`):
+    /// build the children with it, then take its [`Ctx::into_bindings`] and
+    /// run them from a binding of your own.
+    pub fn child(&self) -> Ctx<S, M> {
         Ctx::new(self.emit.clone(), self.theme.clone())
     }
 
-    pub(crate) fn into_bindings(self) -> Vec<Binding<S>> {
+    pub fn into_bindings(self) -> Vec<Binding<S>> {
         self.bindings
     }
 }
@@ -128,12 +147,16 @@ impl<S: 'static, M: 'static> Element<S, M> {
         self
     }
 
-    pub(crate) fn fixed_size(&self) -> Option<i32> {
+    /// The size set with [`Element::fixed`], for containers that lay out
+    /// children themselves.
+    pub fn fixed_size(&self) -> Option<i32> {
         self.fixed
     }
 
-    /// Builds the widget into the fltk group that is currently open.
-    pub(crate) fn build(self, ctx: &mut Ctx<S, M>) -> Widget {
+    /// Builds the widget into the fltk group that is currently open and
+    /// registers its bindings on `ctx`. Containers usually want
+    /// [`Ctx::build_children`] instead.
+    pub fn build(self, ctx: &mut Ctx<S, M>) -> Widget {
         let widget = (self.build)(ctx);
 
         if let Some(mut flex) = Flex::from_dyn_widget(&widget) {
@@ -173,8 +196,8 @@ impl<S: 'static, M: 'static> Element<S, M> {
 }
 
 /// Re-runs the layout of a widget's parent row/column after it changed
-/// visibility or children.
-pub(crate) fn relayout_parent<W: WidgetExt>(w: &W) {
+/// visibility or children, and redraws the parent.
+pub fn relayout_parent<W: WidgetExt>(w: &W) {
     if let Some(parent) = w.parent() {
         if let Some(flex) = Flex::from_dyn_widget(&parent) {
             flex.recalc();
