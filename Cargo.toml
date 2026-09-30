@@ -1,0 +1,21 @@
+[package]
+name = "heroui"
+version = "0.1.0"
+description = "Lightweight Elm-style UI library on fltk-rs for HeroineOS apps"
+repository = "https://github.com/HeroineOS/HeroUI"
+license = "MIT OR Apache-2.0"
+edition = "2021"
+
+[dependencies]
+fltk = "1.5"
+
+[features]
+default = []
+# Task::future on a single shared current-thread runtime.
+tokio = ["dep:tokio"]
+
+[dependencies.tokio]
+version = "1"
+optional = true
+default-features = false
+features = ["rt", "sync"]
