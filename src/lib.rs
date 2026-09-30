@@ -45,7 +45,7 @@ mod task;
 pub mod theme;
 pub mod widgets;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::mpsc;
@@ -77,6 +77,14 @@ pub trait App: Sized + 'static {
     /// Timers etc. Called once at startup.
     fn subscriptions(&self) -> Vec<Subscription<Self::Message>> {
         Vec::new()
+    }
+
+    /// The user asked to close the window (close button, Alt+F4). `None`
+    /// (default) closes it. Return a message to handle it in `update`
+    /// instead, e.g. to confirm unsaved changes; return `Task::quit()`
+    /// from there to really close. Escape never closes a HeroUI window.
+    fn close_requested(&self) -> Option<Self::Message> {
+        None
     }
 
     /// Defaults to the user's theme file ([`Theme::load`]).
@@ -167,6 +175,18 @@ pub fn run<A: App>(mut app: A, settings: Settings) -> Result<(), fltk::prelude::
     }
     win.end();
 
+    // FLTK's default window callback also closes on Escape; only react to
+    // real close requests, and let the app decide.
+    let close_requested = Rc::new(Cell::new(false));
+    {
+        let flag = close_requested.clone();
+        win.set_callback(move |_| {
+            if fltk::app::event() == fltk::enums::Event::Close {
+                flag.set(true);
+            }
+        });
+    }
+
     for sub in app.subscriptions() {
         match sub {
             Subscription::Every(interval, msg) => {
@@ -186,6 +206,15 @@ pub fn run<A: App>(mut app: A, settings: Settings) -> Result<(), fltk::prelude::
 
     while fl.wait() {
         let mut changed = false;
+        if close_requested.take() {
+            match app.close_requested() {
+                Some(msg) => queue.borrow_mut().push_back(msg),
+                None => {
+                    fl.quit();
+                    return Ok(());
+                }
+            }
+        }
         loop {
             let next = queue.borrow_mut().pop_front().or_else(|| rx.try_recv().ok());
             let Some(msg) = next else { break };

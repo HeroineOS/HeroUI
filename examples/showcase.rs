@@ -1,5 +1,5 @@
-//! Tour of HeroUI: a reusable component plugged in with `embed`, inputs,
-//! a dynamic list, background work, and a timer.
+//! Tour of HeroUI: reusable components plugged in with `embed` (one with
+//! its own background task and timer), inputs, a dynamic list, a timer.
 //!
 //! cargo run --example showcase
 
@@ -38,6 +38,47 @@ impl Counter {
     }
 }
 
+// ---- A component with side effects: background reads and its own timer. ----
+// The parent maps its Task and Subscription with the same wrapper as embed.
+
+#[derive(Default)]
+struct LoadAvg {
+    text: String,
+}
+
+#[derive(Clone)]
+enum LoadMsg {
+    Refresh,
+    Loaded(String),
+}
+
+impl LoadAvg {
+    fn update(&mut self, msg: LoadMsg) -> Task<LoadMsg> {
+        match msg {
+            // Blocking I/O belongs off the UI thread.
+            LoadMsg::Refresh => {
+                return Task::perform(|| {
+                    let s = std::fs::read_to_string("/proc/loadavg").unwrap_or_default();
+                    LoadMsg::Loaded(s.split_whitespace().take(3).collect::<Vec<_>>().join("  "))
+                })
+            }
+            LoadMsg::Loaded(s) => self.text = s,
+        }
+        Task::none()
+    }
+
+    fn subscriptions() -> Vec<Subscription<LoadMsg>> {
+        vec![Subscription::every(Duration::from_secs(5), LoadMsg::Refresh)]
+    }
+
+    fn view() -> Element<LoadAvg, LoadMsg> {
+        row(vec![
+            button("Read /proc/loadavg", LoadMsg::Refresh).fixed(170),
+            text(|s: &LoadAvg| s.text.clone()),
+        ])
+    }
+}
+
 // ---- The app. ---------------------------------------------------------------
 
 #[derive(Default)]
@@ -47,7 +88,7 @@ struct Showcase {
     volume: f64,
     draft: String,
     items: Vec<String>,
-    load: String,
+    load: LoadAvg,
     clock: String,
 }
 
@@ -59,8 +100,7 @@ enum Msg {
     Draft(String),
     Add,
     Remove(usize),
-    RefreshLoad,
-    Load(String),
+    Load(LoadMsg),
     Tick,
 }
 
@@ -83,14 +123,7 @@ impl App for Showcase {
                     self.items.remove(i);
                 }
             }
-            // Blocking I/O belongs off the UI thread.
-            Msg::RefreshLoad => {
-                return Task::perform(|| {
-                    let s = std::fs::read_to_string("/proc/loadavg").unwrap_or_default();
-                    Msg::Load(s.split_whitespace().take(3).collect::<Vec<_>>().join("  "))
-                })
-            }
-            Msg::Load(s) => self.load = s,
+            Msg::Load(m) => return self.load.update(m).map(Msg::Load),
             Msg::Tick => {
                 let secs = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -146,18 +179,16 @@ impl App for Showcase {
                     },
                 ),
             ]),
-            row(vec![
-                button("Read /proc/loadavg", Msg::RefreshLoad).fixed(170),
-                text(|s: &Showcase| s.load.clone()),
-            ])
-            .fixed(34),
+            embed(|s: &Showcase| &s.load, Msg::Load, LoadAvg::view()).fixed(34),
         ])
         .padding(16)
         .spacing(12)
     }
 
     fn subscriptions(&self) -> Vec<Subscription<Msg>> {
-        vec![Subscription::every(Duration::from_secs(1), Msg::Tick)]
+        let mut subs = vec![Subscription::every(Duration::from_secs(1), Msg::Tick)];
+        subs.extend(LoadAvg::subscriptions().into_iter().map(|s| s.map(Msg::Load)));
+        subs
     }
 }
 

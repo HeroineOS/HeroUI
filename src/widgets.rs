@@ -327,8 +327,11 @@ pub fn toggle<S: 'static, M: 'static>(
             let hover2 = hover.clone();
             f.handle(move |w, ev| match ev {
                 Event::Push => true,
-                Event::Released if w.active() => {
-                    emit(on_toggle(!on.get()));
+                // Releasing outside cancels, like a button.
+                Event::Released => {
+                    if fltk::app::event_inside_widget(w) {
+                        emit(on_toggle(!on.get()));
+                    }
                     true
                 }
                 Event::Enter | Event::Leave => {

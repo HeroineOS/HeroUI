@@ -44,10 +44,13 @@ fn checkbox<S: 'static, M: 'static>(
         f.handle({
             let on = on.clone();
             // Don't flip `on` here: send the message, the binding updates it.
-            move |_, ev| match ev {
+            move |f, ev| match ev {
                 Event::Push => true,
+                // Releasing outside cancels, like a button.
                 Event::Released => {
-                    emit(on_toggle(!on.get()));
+                    if heroui::fltk::app::event_inside_widget(f) {
+                        emit(on_toggle(!on.get()));
+                    }
                     true
                 }
                 _ => false,
