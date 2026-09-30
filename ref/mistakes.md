@@ -32,8 +32,9 @@
 9. **Bindings run after every batch of messages, all of them.** Keep them cheap: compare
    before setting (`if w.value() != v`), and don't do I/O or heavy formatting in them.
 10. **`list` item closures get an index**, not the item: read `s.items.get(i)` inside
-    bindings (use `get`, not `[i]`, because a binding can run once before a rebuild). The list
-    rebuilds only when the count changes, and bindings re-read by index, so reordering works.
+    bindings (prefer `.get(i)` over `[i]`, so a bug can't panic the UI). The list rebuilds
+    only when the count changes, and bindings re-read by index, so reordering and in-place
+    edits work without a rebuild.
 11. **Don't enable `tokio` by habit.** `Task::perform` covers almost everything. Enable the
     feature only for many concurrent I/O waits (sockets, D-Bus). It only turns on tokio's
     `rt` + `sync`, so add `time`/`net`/... to your own tokio dependency if the futures need them.
