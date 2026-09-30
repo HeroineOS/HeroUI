@@ -41,8 +41,8 @@
 12. **Quitting**: return `Task::quit()` from `update`; don't call `std::process::exit` (skips
     cleanup) or `fltk::app::quit` directly. Don't set your own window callback to catch
     closing: implement `App::close_requested`.
-14. **Dropping a component's Task**: `self.load.update(m); Task::none()` silently loses its
+13. **Dropping a component's Task**: `self.load.update(m); Task::none()` silently loses its
     background work (the compiler warns: `Task` is `#[must_use]`). Write
     `return self.load.update(m).map(Msg::Load)`.
-13. **Headless test self-kill**: in scripts use `pkill -x <binary>`, not `pkill -f <path>`.
+14. **Headless test self-kill**: in scripts use `pkill -x <binary>`, not `pkill -f <path>`.
     `-f` matches the shell running the script and kills it.

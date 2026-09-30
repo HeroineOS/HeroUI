@@ -80,6 +80,7 @@ impl<S: 'static, M: 'static> Ctx<S, M> {
 }
 
 type Build<S, M> = Box<dyn FnOnce(&mut Ctx<S, M>) -> Widget>;
+type Predicate<S> = Box<dyn Fn(&S) -> bool>;
 
 /// A buildable piece of UI. Create with the functions in
 /// [`crate::widgets`], or [`Element::new`] to wrap any raw fltk widget.
@@ -88,8 +89,8 @@ pub struct Element<S, M> {
     fixed: Option<i32>,
     padding: Option<i32>,
     spacing: Option<i32>,
-    visible: Option<Box<dyn Fn(&S) -> bool>>,
-    enabled: Option<Box<dyn Fn(&S) -> bool>>,
+    visible: Option<Predicate<S>>,
+    enabled: Option<Predicate<S>>,
 }
 
 impl<S: 'static, M: 'static> Element<S, M> {
