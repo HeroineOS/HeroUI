@@ -13,8 +13,22 @@ Built for potato hardware:
   touch a widget only when its value actually changed.
 - **One theme file for every app**: `~/.config/heroui/theme.conf`.
 
-Measured (showcase example, release build, Xvfb, Debian testing amd64): 16.8 MB RSS, of
-which 2.6 MB is anonymous (the rest is shared X/pango/fontconfig pages), 2 threads.
+- **Retained drawing.** Nothing is drawn unless something changed, and then only the changed
+  widgets' rectangles. An idle app sleeps at 0% CPU.
+- **For apps and desktop shells.** Window kinds for panels (with reserved space), desktop
+  widgets (conky-like) and OSDs; `graph` and `canvas` for meters; themed dropdowns.
+
+Measured (release, Xvfb, Debian testing amd64; RSS includes ~12 MB of shared X/pango/fontconfig
+pages, "anon" is the app's own memory; the 2nd thread is pango's fontconfig helper):
+
+| Example | RSS | anon | CPU |
+|---|---|---|---|
+| showcase | 16.8 MB | 2.6 MB | 0% idle |
+| sysmon (conky-like, 1 s refresh) | 16.3 MB | 2.7 MB | 0.1% |
+| stress, 1000 rows × 4 bound widgets, 1 s tick | 18.0 MB | 4.5 MB | 0.2% |
+
+Startup to visible window: ~130-150 ms. Examples: `counter`, `showcase`, `custom_widget`,
+`sysmon`, `panel`, `stress`.
 
 ```toml
 [dependencies]

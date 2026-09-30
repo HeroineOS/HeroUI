@@ -69,16 +69,30 @@ row(vec![
 ```
 
 ## Custom / missing widget (Element::new)
-Full working code: `examples/custom_widget.rs` (themed checkbox + stock `Choice` dropdown).
+Full working code: `examples/custom_widget.rs` (`swatch`, a clickable custom widget).
 Recipe:
-1. `Element::new(move |ctx| { .. })`; create the widget with `::default()`.
-2. Colors from `ctx.theme().clone()` (clone it into draw closures).
-3. Input → `let emit = ctx.emitter();` → `emit(msg)` in the callback/handle. Don't change
-   the widget's look from the handler; let the binding do it.
-4. State → `ctx.bind(move |s| { if changed { set; redraw } })`.
-5. Custom look: draw on a `Frame` (nothing stock to fight) or `w.super_draw(false)`.
-   Use `active_r()` for the disabled look.
-6. Return `w.as_base_widget()`.
+1. `Element::new(move |ctx| { .. })`.
+2. Theme: `let t = ctx.theme_rc();` (an `Rc`, cheap to move into draw closures).
+3. Clickable → `custom_button(move |b| { draw.. })` + `b.set_callback(move |_| emit(msg.clone()))`
+   with `let emit = ctx.emitter();`. In draw use `b.value()` (pressed), `is_hovered(b)`,
+   `b.active_r()`. NO `handle` closure (see mistakes.md #15).
+   Display-only → `Frame::default()` + `set_frame(FrameType::NoBox)` + `draw`, or just `canvas`.
+4. State → `ctx.bind(move |s| { if changed { store; w.redraw() or repaint(&mut w) } })`.
+   Keep a widget-local copy (`Rc<Cell<_>>`) for the draw closure to read.
+5. Return `w.as_base_widget()`.
+
+## Desktop widget (conky-like)
+`Settings::desktop_widget("name", x, y, w, h)`: borderless, Desktop type, below, sticky, no
+taskbar. Sample cheap procfs files directly in `update` on a `Subscription::every` tick;
+`graph(|s| &s.cpu_history, 100.0)` for history, `canvas(|s| key, paint_fn)` for gauges (quantize
+the key, e.g. `(frac * 1000.0) as u16`, so noise doesn't redraw). Full: `examples/sysmon.rs`
+(2.6 MB anon RSS, 0.1% CPU at 1 s refresh).
+
+## Panel / dock
+`Settings::panel("name", Edge::Top, 36)`: Dock type, full screen width, sticky, strut reserved.
+Dropdown popups open as separate top-level windows, so they can extend past the panel.
+Full: `examples/panel.rs`. Other kinds: `.kind(WindowKind::Notification).above(true)` for OSDs.
+Hints are EWMH (X11/XWayland); a Wayland compositor must honor them or match on `.class()`.
 
 ## Custom container
 ```rust
@@ -104,9 +118,11 @@ fn close_requested(&self) -> Option<Msg> { self.dirty.then_some(Msg::AskClose) }
 // update: Msg::AskClose => self.confirm_visible = true,  Msg::ReallyClose => return Task::quit(),
 ```
 
-## Borderless panel / dock / popup
-`Settings::new("panel").size(1920, 32).position(0, 0).decorated(false).resizable(false).class("heroui-panel")`
-The window class is what HeroiWM rules match on.
+## Measuring cost
+`cargo run --release --example stress -- 1000` (1000 rows × 4 bound widgets, 1 s tick), then
+`grep -E 'VmRSS|RssAnon|Threads' /proc/$(pgrep -x stress)/status` and CPU ticks from
+`/proc/PID/stat` fields 14+15 over 10 s. Reference (this repo, Xvfb): 1000 rows = 4.5 MB anon,
+0.2% CPU; 3000 rows = 9 MB, 0.5%.
 
 ## Async (feature `tokio`)
 `heroui = { .., features = ["tokio"] }` and add the tokio features your futures need

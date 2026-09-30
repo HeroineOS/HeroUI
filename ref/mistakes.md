@@ -46,3 +46,10 @@
     `return self.load.update(m).map(Msg::Load)`.
 14. **Headless test self-kill**: in scripts use `pkill -x <binary>`, not `pkill -f <path>`.
     `-f` matches the shell running the script and kills it.
+15. **Per-widget `handle` closures are expensive**: fltk-rs builds a wrapper per call and FLTK
+    drops its tracker with a linear scan, so a `handle` on every row made each X event
+    O(widgets²) (3000 rows: 15% CPU at a 1 s tick). For clicks use `custom_button` + callback;
+    for hover use `heroui::hover::is_hovered`. A handle on ONE window (like a popup) is fine.
+16. **Ghosts after redraw**: `redraw()` paints over the old pixels without clearing. If the
+    new look covers less (knob moved, ring gone), give the widget `FrameType::NoBox` and call
+    `repaint(&mut w)`, which redraws the background under it too.

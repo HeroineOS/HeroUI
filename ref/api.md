@@ -13,8 +13,16 @@ pub trait App: Sized + 'static {
 heroui::run(app, Settings::new("Title").size(w, h)) -> Result<(), FltkError>
 ```
 `Settings` builders: `.size(w,h)` (default 480x320), `.position(x,y)`, `.resizable(bool)`
-(default true), `.decorated(bool)` (false = borderless: panels, docks, popups), `.class("x")`
-(WM/compositor class for window rules).
+(default true), `.decorated(bool)` (false = borderless), `.class("x")` (WM/compositor rules),
+`.kind(WindowKind::{Normal,Dock,Desktop,Dialog,Utility,Notification})`, `.above(b)`, `.below(b)`,
+`.sticky(b)` (all workspaces), `.skip_taskbar(b)`, `.reserve(Edge::Top, px)` (strut).
+Presets: `Settings::panel(title, edge, thickness)`, `Settings::desktop_widget(title, x, y, w, h)`.
+Kinds/states/struts are EWMH hints set at startup (X11 and XWayland); skipped with the
+`wayland` feature.
+
+Drawing model: retained. `view` runs once; after each batch of messages, bindings touch only
+widgets whose value changed and FLTK redraws only those rectangles. Idle = asleep in the
+event loop, 0% CPU (no frame loop, unlike egui; no view re-run/diff, unlike iced).
 
 Escape never closes the window; the WM close button calls `close_requested`.
 
