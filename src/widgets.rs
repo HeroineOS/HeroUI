@@ -244,7 +244,7 @@ fn make_button<S: 'static, M: Clone + 'static>(
         hover_tracking(&mut b, hover.clone());
         b.draw(move |b| {
             let (bg, fg) = if primary { (t.accent, t.accent_text) } else { (t.surface_alt, t.text) };
-            let bg = if !b.active() {
+            let bg = if !b.active_r() {
                 mix(bg, t.background, 0.6)
             } else if b.value() {
                 mix(bg, t.background, 0.25)
@@ -253,7 +253,7 @@ fn make_button<S: 'static, M: Clone + 'static>(
             } else {
                 bg
             };
-            let fg = if b.active() { fg } else { mix(fg, t.background, 0.5) };
+            let fg = if b.active_r() { fg } else { mix(fg, t.background, 0.5) };
             let r = t.radius.min(b.h() / 2);
             draw::set_draw_color(bg);
             draw::draw_rounded_rectf(b.x(), b.y(), b.w(), b.h(), r);
@@ -327,7 +327,7 @@ pub fn toggle<S: 'static, M: 'static>(
             let hover = hover.clone();
             f.draw(move |f| {
                 draw::set_font(t.font(), t.font_size);
-                draw::set_draw_color(if f.active() { t.text } else { t.text_dim });
+                draw::set_draw_color(if f.active_r() { t.text } else { t.text_dim });
                 draw::draw_text2(&label, f.x(), f.y(), f.w() - 48, f.h(), Align::Left);
                 let (tw, th) = (40, 22);
                 let (tx, ty) = (f.x() + f.w() - tw, f.y() + (f.h() - th) / 2);
@@ -381,9 +381,9 @@ pub fn slider<S: 'static, M: 'static>(
         let t = ctx.theme().clone();
         let mut s = HorSlider::default();
         s.set_bounds(*range.start(), *range.end());
-        s.set_frame(FrameType::NoBox);
-        // Suppress FLTK's own knob; ours is drawn below.
-        s.set_slider_frame(FrameType::NoBox);
+        // Draw it all ourselves. (A NoBox knob isn't enough: FLTK falls
+        // back to an up-box knob when both box types are NoBox.)
+        s.super_draw(false);
         s.draw(move |s| {
             let span = (s.maximum() - s.minimum()).max(f64::EPSILON);
             let frac = ((s.value() - s.minimum()) / span).clamp(0.0, 1.0);
@@ -393,7 +393,8 @@ pub fn slider<S: 'static, M: 'static>(
             draw::set_draw_color(t.surface_alt);
             draw::draw_rounded_rectf(x, cy - 3, w, 6, 3);
             let filled = (w as f64 * frac) as i32;
-            draw::set_draw_color(t.accent);
+            let accent = if s.active_r() { t.accent } else { mix(t.accent, t.background, 0.6) };
+            draw::set_draw_color(accent);
             draw::draw_rounded_rectf(x, cy - 3, filled.max(6), 6, 3);
             draw::draw_pie(x + filled - knob / 2, cy - knob / 2, knob, knob, 0.0, 360.0);
         });
