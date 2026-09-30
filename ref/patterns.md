@@ -16,8 +16,22 @@ impl Volume {
 // parent view:   embed(|s: &App| &s.volume, Msg::Volume, Volume::view()).fixed(28)
 // parent update: Msg::Volume(m) => self.volume.update(m),
 ```
-Component `update`s change state only. There's no `Task::map` yet: if a component needs
-background work, have the parent start it (`Task::perform`) and forward the result.
+A component with side effects returns `Task<VolumeMsg>` from its update and may have its
+own `fn subscriptions() -> Vec<Subscription<VolumeMsg>>`. The parent maps both:
+```rust
+Msg::Volume(m) => return self.volume.update(m).map(Msg::Volume),
+// fn subscriptions: subs.extend(Volume::subscriptions().into_iter().map(|s| s.map(Msg::Volume)));
+```
+Full example: `LoadAvg` in `examples/showcase.rs`.
+
+One component per list item: index the lens and the message:
+```rust
+list(|s: &App| s.devices.len(), |i| {
+    embed(move |s: &App| &s.devices[i], move |m| Msg::Device(i, m), Device::view()).fixed(30)
+})
+// update: Msg::Device(i, m) => if let Some(d) = self.devices.get_mut(i) { return d.update(m).map(move |m| Msg::Device(i, m)) }
+```
+(`&s.devices[i]` is safe here: `list` rebuilds on count change before running item bindings.)
 
 ## Background work (blocking I/O, processes, /proc)
 ```rust
@@ -65,6 +79,30 @@ Recipe:
 5. Custom look: draw on a `Frame` (nothing stock to fight) or `w.super_draw(false)`.
    Use `active_r()` for the disabled look.
 6. Return `w.as_base_widget()`.
+
+## Custom container
+```rust
+fn section<S: 'static, M: 'static>(title: &str, children: Vec<Element<S, M>>) -> Element<S, M> {
+    let title = title.to_string();
+    Element::new(move |ctx| {
+        let t = ctx.theme().clone();
+        let mut flex = Flex::default().column();
+        flex.end();
+        flex.set_pad(t.spacing);
+        flex.draw(move |f| { /* border + title; runs after children draw */ });
+        ctx.build_children(&mut flex, children);
+        flex.as_base_widget()
+    })
+}
+```
+Full code: `examples/custom_widget.rs`. `.padding`/`.spacing`/`.fixed`/`.visible` work on it
+because it's a Flex.
+
+## Confirm before closing
+```rust
+fn close_requested(&self) -> Option<Msg> { self.dirty.then_some(Msg::AskClose) }
+// update: Msg::AskClose => self.confirm_visible = true,  Msg::ReallyClose => return Task::quit(),
+```
 
 ## Borderless panel / dock / popup
 `Settings::new("panel").size(1920, 32).position(0, 0).decorated(false).resizable(false).class("heroui-panel")`

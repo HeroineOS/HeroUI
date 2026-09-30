@@ -1,11 +1,12 @@
-//! Wrapping a raw fltk widget with `Element::new`: a themed checkbox, and a
-//! stock `Choice` dropdown. cargo run --example custom_widget
+//! Extending HeroUI from outside the crate with `Element::new`: a themed
+//! checkbox, a stock `Choice` dropdown, and a container element.
+//! cargo run --example custom_widget
 
 use std::cell::Cell;
 use std::rc::Rc;
 
 use heroui::fltk::draw::{self, LineStyle};
-use heroui::fltk::{enums::*, frame::Frame, menu::Choice, prelude::*};
+use heroui::fltk::{enums::*, frame::Frame, group::Flex, menu::Choice, prelude::*};
 use heroui::prelude::*;
 
 /// A checkbox drawn entirely by us on a `Frame` (no stock look).
@@ -99,6 +100,33 @@ fn choice<S: 'static, M: 'static>(
     })
 }
 
+/// A container: a titled, outlined group of children. Any container is
+/// "make a Flex, style it, `ctx.build_children`".
+fn section<S: 'static, M: 'static>(title: &str, children: Vec<Element<S, M>>) -> Element<S, M> {
+    let title = title.to_string();
+    Element::new(move |ctx| {
+        let t = ctx.theme().clone();
+        let mut flex = Flex::default().column();
+        flex.end();
+        flex.set_pad(t.spacing);
+        // Space at the top for the title. This draw callback runs after the
+        // children are drawn, so it only touches the border area.
+        flex.set_margins(t.padding, t.padding + t.font_size, t.padding, t.padding);
+        flex.draw(move |f| {
+            draw::set_draw_color(t.border);
+            draw::draw_rounded_rect(f.x(), f.y() + t.font_size / 2, f.w(), f.h() - t.font_size / 2, t.radius);
+            draw::set_font(t.bold_font(), t.font_size - 2);
+            let tw = draw::width(&title) as i32 + 8;
+            draw::set_draw_color(t.background);
+            draw::draw_rectf(f.x() + t.radius, f.y(), tw, t.font_size);
+            draw::set_draw_color(t.text_dim);
+            draw::draw_text2(&title, f.x() + t.radius + 4, f.y(), tw, t.font_size, Align::Left);
+        });
+        ctx.build_children(&mut flex, children);
+        flex.as_base_widget()
+    })
+}
+
 #[derive(Default)]
 struct Demo {
     autostart: bool,
@@ -126,12 +154,18 @@ impl App for Demo {
 
     fn view(&self) -> Element<Self, Msg> {
         column(vec![
-            checkbox("Start on login", |s: &Demo| s.autostart, Msg::Autostart).fixed(28),
-            row(vec![
-                label("Size").fixed(60),
-                choice(SIZES, |s: &Demo| s.size, Msg::Size),
-            ])
-            .fixed(32),
+            section(
+                "Session",
+                vec![
+                    checkbox("Start on login", |s: &Demo| s.autostart, Msg::Autostart).fixed(28),
+                    row(vec![
+                        label("Size").fixed(60),
+                        choice(SIZES, |s: &Demo| s.size, Msg::Size),
+                    ])
+                    .fixed(32),
+                ],
+            )
+            .fixed(110),
             text(|s: &Demo| format!("autostart={} size={}", s.autostart, SIZES[s.size])).fixed(24),
             spacer(),
         ])
@@ -140,5 +174,5 @@ impl App for Demo {
 }
 
 fn main() {
-    heroui::run(Demo::default(), Settings::new("Custom widgets").size(320, 160)).unwrap();
+    heroui::run(Demo::default(), Settings::new("Custom widgets").size(320, 200)).unwrap();
 }

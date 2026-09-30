@@ -23,5 +23,6 @@ widget touched only when the value changed).
 
 Typical heights: row of buttons/inputs 34, toggle 28, list item 30, progress 10, heading row 36.
 
-Not built in yet (use `Element::new` + raw fltk, see patterns.md): dropdown/choice, checkbox,
-multi-line text, scroll area, images/icons, menus, tabs.
+Not built in yet (use `Element::new` + raw fltk, see patterns.md and
+`examples/custom_widget.rs`, which has checkbox, dropdown and a titled section container):
+multi-line text, scroll area, images/icons, menus, tabs, Enter-to-submit on text_input.

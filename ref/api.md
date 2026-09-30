@@ -7,6 +7,7 @@ pub trait App: Sized + 'static {
     fn update(&mut self, msg: Self::Message) -> Task<Self::Message>;
     fn view(&self) -> Element<Self, Self::Message>;              // called once
     fn subscriptions(&self) -> Vec<Subscription<Self::Message>> { vec![] } // called once
+    fn close_requested(&self) -> Option<Self::Message> { None }  // None = close; Some(msg) = ask update
     fn theme(&self) -> Theme { Theme::load() }                   // user's theme.conf
 }
 heroui::run(app, Settings::new("Title").size(w, h)) -> Result<(), FltkError>
@@ -14,6 +15,8 @@ heroui::run(app, Settings::new("Title").size(w, h)) -> Result<(), FltkError>
 `Settings` builders: `.size(w,h)` (default 480x320), `.position(x,y)`, `.resizable(bool)`
 (default true), `.decorated(bool)` (false = borderless: panels, docks, popups), `.class("x")`
 (WM/compositor class for window rules).
+
+Escape never closes the window; the WM close button calls `close_requested`.
 
 Loop: widget callbacks queue messages → `update` for each → returned tasks start → all
 bindings run once with the new state.
@@ -27,10 +30,11 @@ bindings run once with the new state.
 | `Task::quit()` | close window, `run` returns |
 | `Task::batch([t1, t2])` | several at once |
 | `Task::future(async move { .. })` | feature `tokio` only: shared current-thread runtime |
+| `task.map(Msg::Child)` | component task → parent task (wraps messages and background results) |
 
 ## Subscription
 `Subscription::every(Duration, msg)`: clones `msg` to `update` every interval, on the UI
-thread (FLTK timeout, no extra thread).
+thread (FLTK timeout, no extra thread). `sub.map(Msg::Child)` converts a component's.
 
 ## Element<S, M> modifiers
 | Modifier | Meaning |
@@ -48,6 +52,10 @@ raw fltk widget (see patterns.md).
 - `ctx.emitter() -> Rc<dyn Fn(M)>`: capture it in widget callbacks to send messages.
 - `ctx.bind(move |s: &S| ..)`: run after every update (and once at startup). Update the widget here.
 - `ctx.theme() -> &Theme`.
+- `ctx.build_children(&mut flex, children)`: build child Elements into a Flex, honoring `.fixed`.
+  This is all a custom container needs.
+- `ctx.child()` + `ctx.into_bindings()`, `el.build(ctx)`, `el.fixed_size()`,
+  `heroui::relayout_parent(&w)`: for containers that rebuild children (see `list` source).
 
 ## embed (reusable components)
 ```rust
@@ -56,3 +64,5 @@ embed(lens: Fn(&S) -> &T, map: Fn(TM) -> M, child: Element<T, TM>) -> Element<S,
 // update: Msg::Counter(m) => self.counter.update(m),
 ```
 The component knows only its own state `T` and messages `TM`. The parent forwards the messages.
+If the component's update returns a Task: `Msg::Load(m) => return self.load.update(m).map(Msg::Load),`
+and its subscriptions: `subs.extend(LoadAvg::subscriptions().into_iter().map(|s| s.map(Msg::Load)))`.
