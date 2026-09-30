@@ -8,6 +8,8 @@ edition = "2021"
 
 [dependencies]
 fltk = "1.5"
+# Already built as part of fltk; used for a few raw calls on hot paths.
+fltk-sys = "1.5"
 
 [features]
 default = []

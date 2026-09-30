@@ -1,14 +1,22 @@
 //! Built-in elements. All take zero size and are laid out by `row`/`column`.
 //! Interactive ones are custom-drawn from the theme so they look the same
 //! (and modern) regardless of FLTK's scheme.
+//!
+//! Cost rules every widget here follows (see `examples/stress.rs`):
+//! - No Rust `handle` closure per widget: clickable things are
+//!   `Fl_Button`s (FLTK handles press/release natively) and hover comes
+//!   from `crate::hover`.
+//! - Draw closures share the theme through an `Rc`, not a copy.
+//! - Bindings compare before touching a widget.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::ops::RangeInclusive;
 use std::rc::Rc;
 
 use fltk::button::Button;
 use fltk::draw;
-use fltk::enums::{Align, CallbackTrigger, Color, Cursor, Event, FrameType};
+use fltk::draw::LineStyle;
+use fltk::enums::{Align, CallbackTrigger, Color, FrameType};
 use fltk::frame::Frame;
 use fltk::group::Flex;
 use fltk::input::Input;
@@ -16,7 +24,8 @@ use fltk::prelude::*;
 use fltk::valuator::HorSlider;
 
 use crate::element::{relayout_parent, Ctx, Element};
-use crate::theme::{Theme, ROUNDED};
+use crate::hover::is_hovered;
+use crate::theme::ROUNDED;
 
 fn text_frame<S: 'static, M: 'static>(ctx: &Ctx<S, M>, size_delta: i32, dim: bool) -> Frame {
     let t = ctx.theme();
@@ -69,8 +78,8 @@ pub fn text<S: 'static, M: 'static>(f: impl Fn(&S) -> String + 'static) -> Eleme
         ctx.bind(move |s| {
             let v = f(s);
             if last.as_ref() != Some(&v) {
+                // Also schedules the redraw, background included.
                 w.set_label(&v);
-                w.redraw();
                 last = Some(v);
             }
         });
@@ -176,37 +185,38 @@ impl<S: 'static, M: 'static> ListState<S, M> {
     }
 }
 
-fn set_cursor<W: WidgetExt>(w: &W, cursor: Cursor) {
-    if let Some(mut win) = w.window() {
-        win.set_cursor(cursor);
-    }
+/// Redraws a transparent (`FrameType::NoBox`) custom widget together with
+/// the background behind it. Use it when a redraw can paint *less* than
+/// before (a knob that moved, a hover ring that went away); a plain
+/// `redraw()` only paints over the old pixels. Only works on `NoBox`
+/// widgets, which everything built with [`custom_button`] is.
+pub fn repaint<W: WidgetExt>(w: &mut W) {
+    // For NoBox widgets FLTK damages the window area under the widget,
+    // so the background is redrawn in the same (clipped) pass.
+    w.redraw_label();
 }
 
-fn hover_tracking<W: WidgetExt + WidgetBase>(w: &mut W, hover: Rc<Cell<bool>>) {
-    w.handle(move |w, ev| match ev {
-        Event::Enter => {
-            hover.set(true);
-            if w.active() {
-                set_cursor(w, Cursor::Hand);
-            }
-            w.redraw();
-            true
-        }
-        Event::Leave => {
-            hover.set(false);
-            set_cursor(w, Cursor::Default);
-            w.redraw();
-            true
-        }
-        _ => false,
-    });
-}
-
-fn mix(a: Color, b: Color, t: f32) -> Color {
+/// Blends `a` toward `b` by `t` (0.0 = a, 1.0 = b).
+pub fn mix(a: Color, b: Color, t: f32) -> Color {
     let (ar, ag, ab) = a.to_rgb();
     let (br, bg, bb) = b.to_rgb();
     let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t) as u8;
     Color::from_rgb(l(ar, br), l(ag, bg), l(ab, bb))
+}
+
+/// An `Fl_Button` drawn entirely by `draw`, with no stock look to fight.
+/// FLTK does press/release (release outside cancels) and fires the
+/// callback; [`crate::hover`] redraws it on enter/leave. This is the cheap
+/// way to make any clickable custom widget: set a callback, don't add a
+/// `handle` closure. In `draw`, use `b.value()` (pressed),
+/// [`is_hovered`](crate::hover::is_hovered) and `b.active_r()`.
+pub fn custom_button(draw: impl FnMut(&mut Button) + 'static) -> Button {
+    let mut b = Button::default();
+    b.set_frame(FrameType::NoBox);
+    b.super_draw(false);
+    b.clear_visible_focus();
+    b.draw(draw);
+    b
 }
 
 fn make_button<S: 'static, M: Clone + 'static>(
@@ -216,30 +226,24 @@ fn make_button<S: 'static, M: Clone + 'static>(
 ) -> Element<S, M> {
     let label = label.to_string();
     Element::new(move |ctx| {
-        let t: Theme = ctx.theme().clone();
-        let mut b = Button::default().with_label(&label);
-        b.set_frame(FrameType::NoBox);
-        b.set_down_frame(FrameType::NoBox);
-        let hover = Rc::new(Cell::new(false));
-        hover_tracking(&mut b, hover.clone());
-        b.draw(move |b| {
+        let t = ctx.theme_rc();
+        let mut b = custom_button(move |b| {
             let (bg, fg) = if primary { (t.accent, t.accent_text) } else { (t.surface_alt, t.text) };
             let bg = if !b.active_r() {
                 mix(bg, t.background, 0.6)
             } else if b.value() {
                 mix(bg, t.background, 0.25)
-            } else if hover.get() {
+            } else if is_hovered(b) {
                 mix(bg, Color::White, 0.1)
             } else {
                 bg
             };
             let fg = if b.active_r() { fg } else { mix(fg, t.background, 0.5) };
-            let r = t.radius.min(b.h() / 2);
             draw::set_draw_color(bg);
-            draw::draw_rounded_rectf(b.x(), b.y(), b.w(), b.h(), r);
+            draw::draw_rounded_rectf(b.x(), b.y(), b.w(), b.h(), t.radius.min(b.h() / 2));
             draw::set_draw_color(fg);
             draw::set_font(t.font(), t.font_size);
-            draw::draw_text2(&b.label(), b.x(), b.y(), b.w(), b.h(), Align::Center);
+            draw::draw_text2(&label, b.x(), b.y(), b.w(), b.h(), Align::Center);
         });
         let emit = ctx.emitter();
         b.set_callback(move |_| emit(msg.clone()));
@@ -257,6 +261,163 @@ pub fn primary_button<S: 'static, M: Clone + 'static>(label: &str, msg: M) -> El
     make_button(label, msg, true)
 }
 
+/// Shared by toggle and checkbox: a custom button showing a bool from state
+/// and sending `on_toggle(!current)` when clicked.
+fn bool_button<S: 'static, M: 'static>(
+    value: impl Fn(&S) -> bool + 'static,
+    on_toggle: impl Fn(bool) -> M + 'static,
+    ctx: &mut Ctx<S, M>,
+    draw: impl Fn(&mut Button, bool) + 'static,
+) -> Button {
+    let on = Rc::new(Cell::new(false));
+    let mut b = custom_button({
+        let on = on.clone();
+        move |b| draw(b, on.get())
+    });
+    let emit = ctx.emitter();
+    {
+        let on = on.clone();
+        b.set_callback(move |_| emit(on_toggle(!on.get())));
+    }
+    let mut w = b.clone();
+    ctx.bind(move |s| {
+        let v = value(s);
+        if on.get() != v {
+            on.set(v);
+            w.redraw();
+        }
+    });
+    b
+}
+
+/// An on/off switch with a label to its left.
+pub fn toggle<S: 'static, M: 'static>(
+    label: &str,
+    value: impl Fn(&S) -> bool + 'static,
+    on_toggle: impl Fn(bool) -> M + 'static,
+) -> Element<S, M> {
+    let label = label.to_string();
+    Element::new(move |ctx| {
+        let t = ctx.theme_rc();
+        let b = bool_button(value, on_toggle, ctx, move |b, on| {
+            draw::set_font(t.font(), t.font_size);
+            draw::set_draw_color(if b.active_r() { t.text } else { t.text_dim });
+            draw::draw_text2(&label, b.x(), b.y(), b.w() - 48, b.h(), Align::Left);
+            let (tw, th) = (40, 22);
+            let (tx, ty) = (b.x() + b.w() - tw, b.y() + (b.h() - th) / 2);
+            let track = if on { t.accent } else { t.surface_alt };
+            let track = if is_hovered(b) { mix(track, Color::White, 0.1) } else { track };
+            let track = if b.active_r() { track } else { mix(track, t.background, 0.6) };
+            draw::set_draw_color(track);
+            draw::draw_rounded_rectf(tx, ty, tw, th, th / 2);
+            let knob = th - 6;
+            let kx = if on { tx + tw - knob - 3 } else { tx + 3 };
+            draw::set_draw_color(if on { t.accent_text } else { t.text_dim });
+            draw::draw_pie(kx, ty + 3, knob, knob, 0.0, 360.0);
+        });
+        b.as_base_widget()
+    })
+}
+
+/// A checkbox with a label to its right.
+pub fn checkbox<S: 'static, M: 'static>(
+    label: &str,
+    value: impl Fn(&S) -> bool + 'static,
+    on_toggle: impl Fn(bool) -> M + 'static,
+) -> Element<S, M> {
+    let label = label.to_string();
+    Element::new(move |ctx| {
+        let t = ctx.theme_rc();
+        let b = bool_button(value, on_toggle, ctx, move |b, on| {
+            let s = 18;
+            let (x, y) = (b.x(), b.y() + (b.h() - s) / 2);
+            let bg = if on { t.accent } else { t.surface_alt };
+            let bg = if is_hovered(b) { mix(bg, Color::White, 0.1) } else { bg };
+            let bg = if b.active_r() { bg } else { mix(bg, t.background, 0.6) };
+            draw::set_draw_color(bg);
+            draw::draw_rounded_rectf(x, y, s, s, (t.radius / 2).min(5));
+            if on {
+                draw::set_draw_color(t.accent_text);
+                draw::set_line_style(LineStyle::Solid | LineStyle::CapRound | LineStyle::JoinRound, 2);
+                draw::draw_line(x + 4, y + 9, x + 8, y + 13);
+                draw::draw_line(x + 8, y + 13, x + 14, y + 5);
+                draw::set_line_style(LineStyle::Solid, 0);
+            }
+            draw::set_font(t.font(), t.font_size);
+            draw::set_draw_color(if b.active_r() { t.text } else { t.text_dim });
+            draw::draw_text2(&label, x + s + 8, b.y(), b.w() - s - 8, b.h(), Align::Left);
+        });
+        b.as_base_widget()
+    })
+}
+
+/// A dropdown: shows `options(state)[selected(state)]`; picking another
+/// option sends `on_select(index)`. Options can be a static list
+/// (`|_| SIZES` with `const SIZES: &[&str]`) or come from state
+/// (`|s| &s.devices`). The popup window only exists while it is open.
+pub fn dropdown<S: 'static, M: 'static, T: AsRef<str> + 'static>(
+    options: impl Fn(&S) -> &[T] + 'static,
+    selected: impl Fn(&S) -> usize + 'static,
+    on_select: impl Fn(usize) -> M + 'static,
+) -> Element<S, M> {
+    Element::new(move |ctx| {
+        let t = ctx.theme_rc();
+        // Copies of the state's options and selection, updated by the
+        // binding only when they change.
+        let opts: Rc<RefCell<Vec<String>>> = Rc::default();
+        let sel = Rc::new(Cell::new(usize::MAX));
+        let mut b = custom_button({
+            let (t, opts, sel) = (t.clone(), opts.clone(), sel.clone());
+            move |b| {
+                let bg = if is_hovered(b) || b.value() { mix(t.surface_alt, Color::White, 0.1) } else { t.surface_alt };
+                let bg = if b.active_r() { bg } else { mix(bg, t.background, 0.6) };
+                draw::set_draw_color(bg);
+                draw::draw_rounded_rectf(b.x(), b.y(), b.w(), b.h(), t.radius.min(b.h() / 2));
+                let fg = if b.active_r() { t.text } else { t.text_dim };
+                draw::set_draw_color(fg);
+                draw::set_font(t.font(), t.font_size);
+                if let Some(text) = opts.borrow().get(sel.get()) {
+                    draw::draw_text2(text, b.x() + 12, b.y(), b.w() - 40, b.h(), Align::Left | Align::Clip);
+                }
+                // Chevron.
+                let (cx, cy) = (b.x() + b.w() - 18, b.y() + b.h() / 2);
+                draw::set_draw_color(t.text_dim);
+                draw::set_line_style(LineStyle::Solid | LineStyle::CapRound | LineStyle::JoinRound, 2);
+                draw::draw_line(cx - 4, cy - 2, cx, cy + 2);
+                draw::draw_line(cx, cy + 2, cx + 4, cy - 2);
+                draw::set_line_style(LineStyle::Solid, 0);
+            }
+        });
+        let emit = ctx.emitter();
+        let on_select = Rc::new(on_select);
+        {
+            let (t, opts, sel) = (t.clone(), opts.clone(), sel.clone());
+            b.set_callback(move |b| {
+                let (emit, on_select) = (emit.clone(), on_select.clone());
+                let current = Some(sel.get()).filter(|&i| i < opts.borrow().len());
+                crate::popup::open(b, opts.borrow().clone(), current, t.clone(), move |i| emit(on_select(i)));
+            });
+        }
+        let mut w = b.clone();
+        ctx.bind(move |s| {
+            let new = options(s);
+            let mut changed = false;
+            {
+                let mut cur = opts.borrow_mut();
+                if cur.len() != new.len() || cur.iter().zip(new).any(|(a, b)| a != b.as_ref()) {
+                    *cur = new.iter().map(|o| o.as_ref().to_owned()).collect();
+                    changed = true;
+                }
+            }
+            let i = selected(s);
+            if sel.replace(i) != i || changed {
+                w.redraw();
+            }
+        });
+        b.as_base_widget()
+    })
+}
+
 /// A single-line text field showing `value(state)`; every edit sends
 /// `on_change(new_text)`. The field is only overwritten when the state
 /// differs from what's typed, so the cursor doesn't jump.
@@ -265,7 +426,7 @@ pub fn text_input<S: 'static, M: 'static>(
     on_change: impl Fn(String) -> M + 'static,
 ) -> Element<S, M> {
     Element::new(move |ctx| {
-        let t = ctx.theme().clone();
+        let t = ctx.theme_rc();
         let mut input = Input::default();
         input.set_frame(ROUNDED);
         input.set_color(t.surface_alt);
@@ -288,72 +449,6 @@ pub fn text_input<S: 'static, M: 'static>(
     })
 }
 
-/// An on/off switch with a label to its left.
-pub fn toggle<S: 'static, M: 'static>(
-    label: &str,
-    value: impl Fn(&S) -> bool + 'static,
-    on_toggle: impl Fn(bool) -> M + 'static,
-) -> Element<S, M> {
-    let label = label.to_string();
-    Element::new(move |ctx| {
-        let t = ctx.theme().clone();
-        let on = Rc::new(Cell::new(false));
-        // The label is drawn by us, not set on the widget: fltk-rs runs a
-        // custom draw *after* the widget's own, which would draw it twice.
-        let mut f = Frame::default();
-        let hover = Rc::new(Cell::new(false));
-        {
-            let on = on.clone();
-            let hover = hover.clone();
-            f.draw(move |f| {
-                draw::set_font(t.font(), t.font_size);
-                draw::set_draw_color(if f.active_r() { t.text } else { t.text_dim });
-                draw::draw_text2(&label, f.x(), f.y(), f.w() - 48, f.h(), Align::Left);
-                let (tw, th) = (40, 22);
-                let (tx, ty) = (f.x() + f.w() - tw, f.y() + (f.h() - th) / 2);
-                let track = if on.get() { t.accent } else { t.surface_alt };
-                let track = if hover.get() { mix(track, Color::White, 0.1) } else { track };
-                draw::set_draw_color(track);
-                draw::draw_rounded_rectf(tx, ty, tw, th, th / 2);
-                let knob = th - 6;
-                let kx = if on.get() { tx + tw - knob - 3 } else { tx + 3 };
-                draw::set_draw_color(if on.get() { t.accent_text } else { t.text_dim });
-                draw::draw_pie(kx, ty + 3, knob, knob, 0.0, 360.0);
-            });
-        }
-        let emit = ctx.emitter();
-        {
-            let on = on.clone();
-            let hover2 = hover.clone();
-            f.handle(move |w, ev| match ev {
-                Event::Push => true,
-                // Releasing outside cancels, like a button.
-                Event::Released => {
-                    if fltk::app::event_inside_widget(w) {
-                        emit(on_toggle(!on.get()));
-                    }
-                    true
-                }
-                Event::Enter | Event::Leave => {
-                    hover2.set(ev == Event::Enter);
-                    w.redraw();
-                    true
-                }
-                _ => false,
-            });
-        }
-        let mut w = f.clone();
-        ctx.bind(move |s| {
-            let v = value(s);
-            if on.get() != v {
-                on.set(v);
-                w.redraw();
-            }
-        });
-        f.as_base_widget()
-    })
-}
-
 /// A horizontal slider over `range`, sending `on_change(value)` while dragged.
 pub fn slider<S: 'static, M: 'static>(
     range: RangeInclusive<f64>,
@@ -361,11 +456,12 @@ pub fn slider<S: 'static, M: 'static>(
     on_change: impl Fn(f64) -> M + 'static,
 ) -> Element<S, M> {
     Element::new(move |ctx| {
-        let t = ctx.theme().clone();
+        let t = ctx.theme_rc();
         let mut s = HorSlider::default();
         s.set_bounds(*range.start(), *range.end());
         // Draw it all ourselves. (A NoBox knob isn't enough: FLTK falls
         // back to an up-box knob when both box types are NoBox.)
+        s.set_frame(FrameType::NoBox);
         s.super_draw(false);
         s.draw(move |s| {
             let span = (s.maximum() - s.minimum()).max(f64::EPSILON);
@@ -382,13 +478,18 @@ pub fn slider<S: 'static, M: 'static>(
             draw::draw_pie(x + filled - knob / 2, cy - knob / 2, knob, knob, 0.0, 360.0);
         });
         let emit = ctx.emitter();
-        s.set_callback(move |s| emit(on_change(s.value())));
+        s.set_callback(move |s| {
+            // Dragging moves the knob without going through the binding.
+            repaint(s);
+            emit(on_change(s.value()))
+        });
         let mut w = s.clone();
         ctx.bind(move |st| {
             let v = value(st);
             if (w.value() - v).abs() > f64::EPSILON {
                 w.set_value(v);
-                w.redraw();
+                // The knob moved: clear where it was.
+                repaint(&mut w);
             }
         });
         s.as_base_widget()
@@ -398,7 +499,7 @@ pub fn slider<S: 'static, M: 'static>(
 /// A read-only bar showing `value(state)` in 0.0..=1.0.
 pub fn progress<S: 'static, M: 'static>(value: impl Fn(&S) -> f64 + 'static) -> Element<S, M> {
     Element::new(move |ctx| {
-        let t = ctx.theme().clone();
+        let t = ctx.theme_rc();
         let frac = Rc::new(Cell::new(0.0f64));
         let mut f = Frame::default();
         {

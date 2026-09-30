@@ -41,6 +41,8 @@
 //! ```
 
 mod element;
+pub mod hover;
+mod popup;
 mod task;
 pub mod theme;
 pub mod widgets;
@@ -230,6 +232,7 @@ pub fn run<A: App>(mut app: A, settings: Settings) -> Result<(), fltk::prelude::
                 b(&app);
             }
         }
+        hover::update();
     }
     Ok(())
 }

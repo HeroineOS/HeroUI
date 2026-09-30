@@ -46,7 +46,9 @@ impl<S: 'static, M: 'static> Ctx<S, M> {
         &self.theme
     }
 
-    pub(crate) fn theme_rc(&self) -> Rc<Theme> {
+    /// The shared theme, for capturing in draw closures (cheaper than
+    /// cloning the `Theme`).
+    pub fn theme_rc(&self) -> Rc<Theme> {
         self.theme.clone()
     }
 

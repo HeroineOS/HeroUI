@@ -83,6 +83,7 @@ name = "heroui"
 version = "0.1.0"
 dependencies = [
  "fltk",
+ "fltk-sys",
  "tokio",
 ]
 

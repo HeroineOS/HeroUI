@@ -1,102 +1,49 @@
-//! Extending HeroUI from outside the crate with `Element::new`: a themed
-//! checkbox, a stock `Choice` dropdown, and a container element.
-//! cargo run --example custom_widget
+//! Extending HeroUI from outside the crate with `Element::new`: a clickable
+//! custom-drawn widget and a container element, next to the built-in
+//! checkbox and dropdown. cargo run --example custom_widget
 
 use std::cell::Cell;
 use std::rc::Rc;
 
-use heroui::fltk::draw::{self, LineStyle};
-use heroui::fltk::{enums::*, frame::Frame, group::Flex, menu::Choice, prelude::*};
+use heroui::fltk::draw;
+use heroui::fltk::{enums::*, group::Flex, prelude::*};
+use heroui::hover::is_hovered;
 use heroui::prelude::*;
 
-/// A checkbox drawn entirely by us on a `Frame` (no stock look).
-fn checkbox<S: 'static, M: 'static>(
-    label: &str,
-    value: impl Fn(&S) -> bool + 'static,
-    on_toggle: impl Fn(bool) -> M + 'static,
+/// A clickable custom widget: a color swatch that shows whether it's the
+/// selected one. Built on `custom_button`, so FLTK handles clicks natively
+/// and hover comes for free: no `handle` closure.
+fn swatch<S: 'static, M: Clone + 'static>(
+    color: Color,
+    selected: impl Fn(&S) -> bool + 'static,
+    msg: M,
 ) -> Element<S, M> {
-    let label = label.to_string();
     Element::new(move |ctx| {
-        let t = ctx.theme().clone();
-        // Widget-local copy of the state value, shared by draw/handle/bind.
+        let t = ctx.theme_rc();
         let on = Rc::new(Cell::new(false));
-        let mut f = Frame::default();
-        f.draw({
+        let mut b = custom_button({
             let on = on.clone();
-            move |f| {
-                let s = 18;
-                let (x, y) = (f.x(), f.y() + (f.h() - s) / 2);
-                draw::set_draw_color(if on.get() { t.accent } else { t.surface_alt });
-                draw::draw_rounded_rectf(x, y, s, s, 4);
-                if on.get() {
-                    draw::set_draw_color(t.accent_text);
-                    draw::set_line_style(LineStyle::Solid, 2);
-                    draw::draw_line(x + 4, y + 9, x + 8, y + 13);
-                    draw::draw_line(x + 8, y + 13, x + 14, y + 5);
-                    draw::set_line_style(LineStyle::Solid, 0);
+            move |b| {
+                let r = b.w().min(b.h());
+                let (x, y) = (b.x() + (b.w() - r) / 2, b.y() + (b.h() - r) / 2);
+                if on.get() || is_hovered(b) {
+                    draw::set_draw_color(if on.get() { t.text } else { t.text_dim });
+                    draw::draw_pie(x, y, r, r, 0.0, 360.0);
                 }
-                draw::set_font(t.font(), t.font_size);
-                // active_r(): dims inside a disabled row/column too.
-                draw::set_draw_color(if f.active_r() { t.text } else { t.text_dim });
-                draw::draw_text2(&label, x + s + 8, f.y(), f.w() - s - 8, f.h(), Align::Left);
+                draw::set_draw_color(color);
+                draw::draw_pie(x + 3, y + 3, r - 6, r - 6, 0.0, 360.0);
             }
         });
         let emit = ctx.emitter();
-        f.handle({
-            let on = on.clone();
-            // Don't flip `on` here: send the message, the binding updates it.
-            move |f, ev| match ev {
-                Event::Push => true,
-                // Releasing outside cancels, like a button.
-                Event::Released => {
-                    if heroui::fltk::app::event_inside_widget(f) {
-                        emit(on_toggle(!on.get()));
-                    }
-                    true
-                }
-                _ => false,
-            }
-        });
-        let mut w = f.clone();
+        b.set_callback(move |_| emit(msg.clone()));
+        let mut w = b.clone();
         ctx.bind(move |s| {
-            let v = value(s);
-            if on.get() != v {
-                on.set(v);
+            let v = selected(s);
+            if on.replace(v) != v {
                 w.redraw();
             }
         });
-        f.as_base_widget()
-    })
-}
-
-fn choice<S: 'static, M: 'static>(
-    options: &'static [&'static str],
-    selected: impl Fn(&S) -> usize + 'static,
-    on_select: impl Fn(usize) -> M + 'static,
-) -> Element<S, M> {
-    Element::new(move |ctx| {
-        let t = ctx.theme().clone();
-        let mut c = Choice::default();
-        c.add_choice(&options.join("|"));
-        c.set_frame(heroui::theme::ROUNDED);
-        c.set_down_frame(heroui::theme::ROUNDED);
-        c.set_color(t.surface_alt);
-        c.set_text_color(t.text);
-        c.set_selection_color(t.accent);
-        let emit = ctx.emitter();
-        c.set_callback(move |c| {
-            if c.value() >= 0 {
-                emit(on_select(c.value() as usize));
-            }
-        });
-        let mut w = c.clone();
-        ctx.bind(move |s| {
-            let v = selected(s) as i32;
-            if w.value() != v {
-                w.set_value(v);
-            }
-        });
-        c.as_base_widget()
+        b.as_base_widget()
     })
 }
 
@@ -131,15 +78,18 @@ fn section<S: 'static, M: 'static>(title: &str, children: Vec<Element<S, M>>) ->
 struct Demo {
     autostart: bool,
     size: usize,
+    accent: usize,
 }
 
 #[derive(Clone)]
 enum Msg {
     Autostart(bool),
     Size(usize),
+    Accent(usize),
 }
 
-const SIZES: &[&str] = &["Small", "Medium", "Large"];
+const SIZES: &[&str] = &["Small", "Medium", "Large", "Huge", "Enormous"];
+const ACCENTS: [u32; 5] = [0xb46cff, 0x4c9aff, 0x3ec99a, 0xffb347, 0xff6b8b];
 
 impl App for Demo {
     type Message = Msg;
@@ -148,6 +98,7 @@ impl App for Demo {
         match msg {
             Msg::Autostart(on) => self.autostart = on,
             Msg::Size(i) => self.size = i,
+            Msg::Accent(i) => self.accent = i,
         }
         Task::none()
     }
@@ -160,13 +111,20 @@ impl App for Demo {
                     checkbox("Start on login", |s: &Demo| s.autostart, Msg::Autostart).fixed(28),
                     row(vec![
                         label("Size").fixed(60),
-                        choice(SIZES, |s: &Demo| s.size, Msg::Size),
+                        dropdown(|_: &Demo| SIZES, |s: &Demo| s.size, Msg::Size),
                     ])
                     .fixed(32),
                 ],
             )
             .fixed(110),
-            text(|s: &Demo| format!("autostart={} size={}", s.autostart, SIZES[s.size])).fixed(24),
+            row(ACCENTS
+                .iter()
+                .enumerate()
+                .map(|(i, &c)| swatch(Color::from_hex(c), move |s: &Demo| s.accent == i, Msg::Accent(i)).fixed(32))
+                .chain([spacer()])
+                .collect())
+            .fixed(32),
+            text(|s: &Demo| format!("autostart={} size={} accent={}", s.autostart, SIZES[s.size], s.accent)).fixed(24),
             spacer(),
         ])
         .padding(16)
@@ -174,5 +132,5 @@ impl App for Demo {
 }
 
 fn main() {
-    heroui::run(Demo::default(), Settings::new("Custom widgets").size(320, 200)).unwrap();
+    heroui::run(Demo::default(), Settings::new("Custom widgets").size(320, 240)).unwrap();
 }
