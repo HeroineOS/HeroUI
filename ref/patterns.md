@@ -16,8 +16,8 @@ impl Volume {
 // parent view:   embed(|s: &App| &s.volume, Msg::Volume, Volume::view()).fixed(28)
 // parent update: Msg::Volume(m) => self.volume.update(m),
 ```
-A component can also return a `Task<TM>`. Map it in the parent with a match on the result;
-keep it simple and return `Task::none()` unless it really needs side effects.
+Component `update`s change state only. There's no `Task::map` yet: if a component needs
+background work, have the parent start it (`Task::perform`) and forward the result.
 
 ## Background work (blocking I/O, processes, /proc)
 ```rust
