@@ -17,7 +17,7 @@ widget touched only when the value changed).
 | `text_input(\|s\| String, \|String\| M)` | sends on every edit; not overwritten while it matches state (cursor stays) |
 | `toggle("label", \|s\| bool, \|bool\| M)` | switch, label on the left; give it `.fixed(28)` in a column |
 | `checkbox("label", \|s\| bool, \|bool\| M)` | box + label on the right |
-| `dropdown(\|s\| &[T], \|s\| usize, \|usize\| M)` | `T: AsRef<str>`; static list `\|_: &S\| CONST_SLICE` or from state `\|s\| &s.names`; themed popup (mouse, wheel, arrows, Enter, Esc) that only exists while open |
+| `dropdown(\|s\| &[T], \|s\| usize, \|usize\| M)` | `T: AsRef<str>`; static list `\|_: &S\| CONST_SLICE` or from state `\|s\| &s.names`; list is FLTK's own menu popup (as Fl_Choice), themed; native xdg_popup on Wayland; opens on press and blocks in FLTK's menu loop until a pick |
 | `slider(0.0..=100.0, \|s\| f64, \|f64\| M)` | horizontal, sends while dragging |
 | `progress(\|s\| f64)` | read-only bar, value 0.0..=1.0 |
 | `graph(\|s\| &[f64], max)` | filled line graph (history, oldest first); no allocation per update |

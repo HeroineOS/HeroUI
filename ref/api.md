@@ -17,8 +17,17 @@ heroui::run(app, Settings::new("Title").size(w, h)) -> Result<(), FltkError>
 `.kind(WindowKind::{Normal,Dock,Desktop,Dialog,Utility,Notification})`, `.above(b)`, `.below(b)`,
 `.sticky(b)` (all workspaces), `.skip_taskbar(b)`, `.reserve(Edge::Top, px)` (strut).
 Presets: `Settings::panel(title, edge, thickness)`, `Settings::desktop_widget(title, x, y, w, h)`.
-Kinds/states/struts are EWMH hints set at startup (X11 and XWayland); skipped with the
-`wayland` feature.
+On X11/XWayland these are EWMH hints. On Wayland, Dock/Desktop/Notification become
+wlr-layer-shell surfaces with feature `layer-shell` (+ the fltk-sys fork, see README):
+Dock = top layer anchored along `reserve`'s edge, spanning it, space reserved; Desktop =
+bottom layer at `position` from the screen's top-left; Notification = top layer at
+`position`. If the compositor lacks layer-shell (GNOME) they fall back to XWayland, else
+a normal window. `above/below/sticky/skip_taskbar` have no Wayland meaning (layers cover
+it). Wayland apps can't position regular windows; `position` is ignored there.
+`heroui::on_wayland()` tells which backend runs. Window class (= Wayland app_id) defaults
+to the executable name.
+
+Features: `wayland` (default; hybrid Wayland/X11), `layer-shell`, `tokio`.
 
 Drawing model: retained. `view` runs once; after each batch of messages, bindings touch only
 widgets whose value changed and FLTK redraws only those rectangles. Idle = asleep in the

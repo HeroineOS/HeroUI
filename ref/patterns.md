@@ -83,16 +83,19 @@ Recipe:
 
 ## Desktop widget (conky-like)
 `Settings::desktop_widget("name", x, y, w, h)`: borderless, Desktop type, below, sticky, no
-taskbar. Sample cheap procfs files directly in `update` on a `Subscription::every` tick;
+taskbar (Wayland + `layer-shell`: bottom layer, x/y from the screen's top-left). Sample cheap procfs files directly in `update` on a `Subscription::every` tick;
 `graph(|s| &s.cpu_history, 100.0)` for history, `canvas(|s| key, paint_fn)` for gauges (quantize
 the key, e.g. `(frac * 1000.0) as u16`, so noise doesn't redraw). Full: `examples/sysmon.rs`
 (2.6 MB anon RSS, 0.1% CPU at 1 s refresh).
 
 ## Panel / dock
-`Settings::panel("name", Edge::Top, 36)`: Dock type, full screen width, sticky, strut reserved.
-Dropdown popups open as separate top-level windows, so they can extend past the panel.
-Full: `examples/panel.rs`. Other kinds: `.kind(WindowKind::Notification).above(true)` for OSDs.
-Hints are EWMH (X11/XWayland); a Wayland compositor must honor them or match on `.class()`.
+`Settings::panel("name", Edge::Top, 36)`: Dock type spanning the edge, sticky, space reserved.
+Dropdown popups extend past the panel. Full: `examples/panel.rs`. Other kinds:
+`.kind(WindowKind::Notification).above(true)` for OSDs.
+On Wayland: enable feature `layer-shell` and add the fltk-sys `[patch]` (README) or it runs on
+XWayland. Test natively: headless sway (`WLR_BACKENDS=headless`, `xwayland disable` in its
+config), screenshots with `grim`; layer surfaces don't appear in `swaymsg -t get_tree`, but
+the workspace rect shrinks by the reserved space.
 
 ## Custom container
 ```rust

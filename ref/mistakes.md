@@ -53,3 +53,8 @@
 16. **Ghosts after redraw**: `redraw()` paints over the old pixels without clearing. If the
     new look covers less (knob moved, ring gone), give the widget `FrameType::NoBox` and call
     `repaint(&mut w)`, which redraws the background under it too.
+17. **Wayland: no positions, no stock fltk for shells.** Regular windows can't be placed
+    (`position` is ignored); only layer-shell windows can, through anchors/margins. Don't
+    add the fltk-sys `[patch]` to regular apps; they don't need it. Don't call FLTK screen
+    functions before `heroui::run` in shell apps: that opens the display before HeroUI can
+    pick XWayland as a fallback.
