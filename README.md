@@ -67,7 +67,7 @@ heroui = { git = "https://github.com/HeroineOS/HeroUI", features = ["layer-shell
 fltk-sys = { git = "https://github.com/HeroineOS/fltk-sys" }
 ```
 
-At startup a shell window checks the compositor. With layer-shell (HeroiWM, sway,
+At startup a shell window checks the compositor. With layer-shell (HeroWM, sway,
 Hyprland, KDE, ...) it's a native layer surface. Without it (GNOME) or without the feature,
 it runs on XWayland with X11 dock/desktop hints, or as a normal window if there's no
 XWayland; a line on stderr says which.
