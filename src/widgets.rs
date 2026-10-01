@@ -721,10 +721,14 @@ pub fn graph<S: 'static, M: 'static>(values: impl Fn(&S) -> &[f64] + 'static, ma
     })
 }
 
+/// Space between scrolled content and its scrollbar.
+const SCROLLBAR_GAP: i32 = 8;
+
 /// A vertically scrolling column, for content taller than its space (a
 /// settings page). Children need a height: `.fixed(px)`, `.fixed_with(..)`,
 /// or a natural one (`list`). The content grows and shrinks with them; the
-/// mouse wheel and the scrollbar scroll it.
+/// mouse wheel, the scrollbar, and dragging the content vertically (touch
+/// or mouse, see [`crate::drag_scroll`]) scroll it.
 pub fn scroll<S: 'static, M: 'static>(children: Vec<Element<S, M>>) -> Element<S, M> {
     use fltk::group::{Scroll, ScrollType};
     Element::new(move |ctx| {
@@ -757,7 +761,8 @@ pub fn scroll<S: 'static, M: 'static>(children: Vec<Element<S, M>>) -> Element<S
         let fit_width = {
             let (height, content) = (height.clone(), content.clone());
             move |sc: &Scroll| {
-                let bar = if height.get() > sc.h() { sc.scrollbar_size() } else { 0 };
+                // Room for the scrollbar plus a small gap, when it shows.
+                let bar = if height.get() > sc.h() { sc.scrollbar_size() + SCROLLBAR_GAP } else { 0 };
                 let mut content = content.clone();
                 let (x, y) = (sc.x(), content.y());
                 content.resize(x, y, (sc.w() - bar).max(0), height.get().max(sc.h()));
@@ -767,6 +772,7 @@ pub fn scroll<S: 'static, M: 'static>(children: Vec<Element<S, M>>) -> Element<S
             let fit_width = fit_width.clone();
             sc.resize_callback(move |sc, _, _, _, _| fit_width(sc));
         }
+        crate::drag_scroll::register(&sc);
         let mut last: Vec<i32> = vec![-2; kids.len()];
         let mut scw = sc.clone();
         ctx.bind(move |_| {

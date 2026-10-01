@@ -41,6 +41,7 @@
 //! ```
 
 pub mod anim;
+pub mod drag_scroll;
 mod element;
 pub mod hover;
 mod popup;
@@ -265,6 +266,7 @@ pub fn run<A: App>(mut app: A, mut settings: Settings) -> Result<(), fltk::prelu
     let layer = false;
 
     let fl = fltk::app::App::default();
+    drag_scroll::install();
     let theme = Rc::new(app.theme());
     theme.apply();
 
