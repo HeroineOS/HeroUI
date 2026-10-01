@@ -72,6 +72,26 @@ Hyprland, KDE, ...) it's a native layer surface. Without it (GNOME) or without t
 it runs on XWayland with X11 dock/desktop hints, or as a normal window if there's no
 XWayland; a line on stderr says which.
 
+## GNOME
+
+GNOME's compositor (Mutter) doesn't implement wlr-layer-shell, by design: on GNOME, panels
+and docks are part of GNOME Shell or its extensions. That's a GNOME limit that applies to
+GTK and Qt bars too, not something HeroUI or the fork can fix. What to expect there:
+
+- **Regular apps**: native Wayland, like anywhere else. Mutter doesn't draw title bars for
+  apps, so FLTK draws its own (client-side, via its bundled libdecor).
+- **Panels, desktop widgets, notifications**: HeroUI detects the missing protocol at startup
+  and runs that window on XWayland with X11 hints instead (`_NET_WM_WINDOW_TYPE_DOCK` +
+  strut for panels, `_DESKTOP` + below/sticky for widgets). Mutter honors dock windows and
+  struts for X11 clients (that's how X11 docks like Plank run on GNOME). With no XWayland
+  (some GNOME setups start it on demand or disable it), they're shown as normal windows. A
+  line on stderr says which.
+- **Shell apps built without `layer-shell`** behave the same everywhere on Wayland: XWayland,
+  then normal window.
+
+Not tested on a real GNOME session yet: only the detection and the XWayland/normal-window
+fallbacks were tested (under sway and Xvfb).
+
 ## AI reference
 
 This repo is also a compact reference for AI coding assistants, modeled on
