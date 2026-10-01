@@ -80,6 +80,12 @@ pub trait App: Sized + 'static {
     /// Describes the UI. Called once at startup.
     fn view(&self) -> Element<Self, Self::Message>;
 
+    /// Runs once after the window is shown, e.g. to start loading data in
+    /// the background. Its task is handled like one returned by `update`.
+    fn init(&mut self) -> Task<Self::Message> {
+        Task::none()
+    }
+
     /// Timers etc. Called once at startup.
     fn subscriptions(&self) -> Vec<Subscription<Self::Message>> {
         Vec::new()
@@ -264,7 +270,13 @@ pub fn run<A: App>(mut app: A, mut settings: Settings) -> Result<(), fltk::prelu
     if settings.span && !layer {
         // On Wayland the compositor sizes a spanning panel; elsewhere use
         // the first screen.
-        if let Some((edge, px)) = settings.reserve {
+        if let Some((edge, _)) = settings.reserve {
+            // The panel's depth is its size across the edge (the reserved
+            // space may be smaller, even 0).
+            let px = match edge {
+                Edge::Top | Edge::Bottom => settings.size.1,
+                Edge::Left | Edge::Right => settings.size.0,
+            };
             let (sx, sy, sw, sh) = fltk::app::screen_xywh(0);
             let (x, y, w, h) = match edge {
                 Edge::Top => (sx, sy, sw, px),
@@ -354,6 +366,12 @@ pub fn run<A: App>(mut app: A, mut settings: Settings) -> Result<(), fltk::prelu
     if !on_wayland() && x11::needed(&settings) {
         x11::apply(&win, &settings);
     }
+    let init = app.init();
+    if !run_task(init, &queue, &tx) {
+        return Ok(());
+    }
+    // Messages it queued are handled on the first loop pass.
+    fltk::app::awake();
 
     while fl.wait() {
         let mut changed = false;
