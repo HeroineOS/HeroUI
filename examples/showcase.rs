@@ -135,7 +135,7 @@ impl App for Showcase {
                 return Task::perform(download_step);
             }
             Msg::DownloadStep => {
-                let p = self.download.unwrap_or(0.0) + 0.04;
+                let p = self.download.unwrap_or(0.0) + 0.02;
                 if p >= 1.0 {
                     self.download = None;
                 } else {
@@ -220,7 +220,7 @@ impl App for Showcase {
 }
 
 fn download_step() -> Msg {
-    std::thread::sleep(Duration::from_millis(100));
+    std::thread::sleep(Duration::from_millis(50));
     Msg::DownloadStep
 }
 

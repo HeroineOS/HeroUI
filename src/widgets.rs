@@ -610,8 +610,10 @@ pub fn progress<S: 'static, M: 'static>(value: impl Fn(&S) -> f64 + 'static) -> 
                 frac.set(v);
                 repaint(&mut w);
             } else {
+                // Constant speed, slightly longer than typical update
+                // intervals, so regular updates join into one smooth motion.
                 // Shrinking needs the background repainted, so repaint().
-                frac.animate_to(v, std::time::Duration::from_millis(120), move || repaint(&mut w));
+                frac.follow(v, std::time::Duration::from_millis(200), move || repaint(&mut w));
             }
         });
         f.as_base_widget()

@@ -34,7 +34,8 @@ Helpers for your own widgets: `custom_button(draw)` (cheap clickable base), `rep
 transitions: eased t 0→1 over ~150 ms, repaints only that widget while it runs, and jumps
 straight to 1.0 when the theme has `animations = false`. `toggle` uses it for its knob. For a value that keeps changing, `heroui::anim::Tween`:
 `tween.animate_to(target, duration, move || w.redraw())` (a new target cancels the running
-move; `progress` uses it so coarse updates glide).
+move). `tween.follow(..)` moves at constant speed instead: successive targets join into
+one continuous motion (what `progress` uses; measured: steady 3-5 px per 30 ms, no stalls).
 
 Not built in yet (use `Element::new`, see patterns.md and `examples/custom_widget.rs`):
 multi-line text, scroll area, images/icons, menus, tabs, popovers (a dropdown panel with

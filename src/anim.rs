@@ -26,7 +26,13 @@ pub const SHORT: Duration = Duration::from_millis(150);
 /// Calls `frame(t)` with `t` going from 0 to 1 over `duration` (eased
 /// out), then once more with exactly 1.0. With animations off, only
 /// `frame(1.0)` is called, right away. Repaint the widget in `frame`.
-pub fn animate(duration: Duration, mut frame: impl FnMut(f64) + 'static) {
+pub fn animate(duration: Duration, frame: impl FnMut(f64) + 'static) {
+    animate_with(duration, ease_out, frame)
+}
+
+/// Like [`animate`] with another easing curve, e.g. [`linear`] for values
+/// that keep moving (a progress bar fed regular updates).
+pub fn animate_with(duration: Duration, ease: fn(f64) -> f64, mut frame: impl FnMut(f64) + 'static) {
     if !enabled() || duration.is_zero() {
         frame(1.0);
         return;
@@ -35,7 +41,7 @@ pub fn animate(duration: Duration, mut frame: impl FnMut(f64) + 'static) {
     frame(0.0);
     fltk::app::add_timeout3(1.0 / 60.0, move |handle| {
         let t = (start.elapsed().as_secs_f64() / duration.as_secs_f64()).min(1.0);
-        frame(ease_out(t));
+        frame(ease(t));
         if t < 1.0 {
             fltk::app::repeat_timeout3(1.0 / 60.0, handle);
         }
@@ -72,17 +78,33 @@ impl Tween {
 
     /// Moves from the current value to `target` over `duration`, calling
     /// `redraw` on every frame (it should repaint the widget).
-    pub fn animate_to(&self, target: f64, duration: Duration, mut redraw: impl FnMut() + 'static) {
+    pub fn animate_to(&self, target: f64, duration: Duration, redraw: impl FnMut() + 'static) {
+        self.move_to(target, duration, ease_out, redraw)
+    }
+
+    /// Like [`Tween::animate_to`] at constant speed: for targets that keep
+    /// changing (a new move starts where the last one was, so successive
+    /// moves join into one continuous motion instead of pulsing).
+    pub fn follow(&self, target: f64, duration: Duration, redraw: impl FnMut() + 'static) {
+        self.move_to(target, duration, linear, redraw)
+    }
+
+    fn move_to(&self, target: f64, duration: Duration, ease: fn(f64) -> f64, mut redraw: impl FnMut() + 'static) {
         let generation = self.0.generation.get().wrapping_add(1);
         self.0.generation.set(generation);
         let (from, me) = (self.get(), self.clone());
-        animate(duration, move |t| {
+        animate_with(duration, ease, move |t| {
             if me.0.generation.get() == generation {
                 me.0.value.set(from + (target - from) * t);
                 redraw();
             }
         });
     }
+}
+
+/// Constant speed.
+pub fn linear(t: f64) -> f64 {
+    t
 }
 
 /// Cubic ease-out: fast start, gentle stop.
