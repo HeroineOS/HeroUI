@@ -31,3 +31,25 @@ version = "1"
 optional = true
 default-features = false
 features = ["rt", "sync"]
+
+# `cargo deb --no-build` after building the examples (see .github/workflows)
+# packages them as heroui-demos, to try HeroUI without a Rust toolchain.
+[package.metadata.deb]
+name = "heroui-demos"
+maintainer = "HeroineOS <https://github.com/HeroineOS>"
+copyright = "HeroineOS contributors"
+section = "x11"
+priority = "optional"
+depends = "$auto"
+extended-description = """\
+Example programs of HeroUI, the lightweight UI library of HeroineOS: \
+heroui-showcase (widgets tour), heroui-counter, heroui-custom-widget, \
+heroui-sysmon (conky-like desktop widget) and heroui-panel (a top panel)."""
+assets = [
+    ["target/release/examples/showcase", "usr/bin/heroui-showcase", "755"],
+    ["target/release/examples/counter", "usr/bin/heroui-counter", "755"],
+    ["target/release/examples/custom_widget", "usr/bin/heroui-custom-widget", "755"],
+    ["target/release/examples/sysmon", "usr/bin/heroui-sysmon", "755"],
+    ["target/release/examples/panel", "usr/bin/heroui-panel", "755"],
+    ["README.md", "usr/share/doc/heroui-demos/README.md", "644"],
+]

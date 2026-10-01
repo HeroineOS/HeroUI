@@ -1,0 +1,70 @@
+name: build
+
+# Tests HeroUI on x86_64 and arm64 in a Debian stable container, and
+# packages the examples as heroui-demos (.deb). The examples are built
+# with the layer-shell feature, through the HeroineOS/fltk-sys fork, so
+# heroui-panel and heroui-sysmon are native panels on Wayland.
+# Pushing a tag v* creates a draft release with the .debs.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, runner: ubuntu-24.04 }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test and package the examples
+        run: |
+          docker run --rm -v "$PWD":/src -w /src debian:trixie sh -euc '
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates curl git build-essential cmake pkg-config dpkg-dev binutils \
+              libx11-dev libxext-dev libxft-dev libxinerama-dev libxcursor-dev libxrender-dev libxfixes-dev \
+              libpango1.0-dev libcairo2-dev libgl-dev libwayland-dev wayland-protocols libxkbcommon-dev libdbus-1-dev >/dev/null
+            curl -sSf https://sh.rustup.rs | sh -s -- -y -q --profile minimal
+            . "$HOME/.cargo/env"
+            cargo install -q cargo-deb --locked
+            # Stock fltk-sys: the library and its tests.
+            cargo test --release --locked
+            # The demos, with native Wayland panels through the fork.
+            cargo build --release --examples --features layer-shell \
+              --config "patch.crates-io.fltk-sys.git=\"https://github.com/HeroineOS/fltk-sys\""
+            strip target/release/examples/showcase target/release/examples/counter \
+              target/release/examples/custom_widget target/release/examples/sysmon target/release/examples/panel
+            cargo deb --no-build
+            mkdir -p out && cp target/debian/*.deb out/
+            dpkg-deb -I out/*.deb | sed -n "/Package/,/Description/p"
+          '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: heroui-demos-${{ matrix.arch }}
+          path: out/*.deb
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l dist
+          gh release create "$GITHUB_REF_NAME" dist/*.deb --repo "$GITHUB_REPOSITORY" --draft \
+            --title "HeroUI $GITHUB_REF_NAME demos" \
+            --notes "Example programs as a Debian package. Install with: sudo apt install ./heroui-demos_*_<arch>.deb, then run heroui-showcase, heroui-counter, heroui-custom-widget, heroui-sysmon or heroui-panel."
