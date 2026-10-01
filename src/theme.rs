@@ -458,9 +458,34 @@ mod tests {
         let mut t = Theme::light();
         t.radius = 4;
         t.font = "Inter".into();
-        let mut back = Theme::dark();
-        back.apply_conf(&t.to_conf());
-        assert_eq!(back, t);
+        t.surface = Color::from_hex(0x123456);
+        assert_eq!(Theme::from_conf(&t.to_conf()), t);
+        let mut d = Theme::dark();
+        d.accent = Color::from_hex(0x3ec99a);
+        d.accent_text = contrast_text(d.accent);
+        assert_eq!(Theme::from_conf(&d.to_conf()), d);
+    }
+
+    #[test]
+    fn files_are_minimal_and_modes_keep_the_accent() {
+        let mut t = Theme::dark();
+        t.accent = Color::from_hex(0xff6b8b);
+        let conf = t.to_conf();
+        assert!(conf.contains("mode = dark") && conf.contains("accent = #ff6b8b"), "{conf}");
+        assert!(!conf.contains("background") && !conf.contains("accent_text"), "{conf}");
+        // Switching the mode line keeps the custom accent.
+        let light = Theme::from_conf(&conf.replace("mode = dark", "mode = light"));
+        assert_eq!(light.mode, Mode::Light);
+        assert_eq!(light.background, Theme::light().background);
+        assert_eq!(light.accent, Color::from_hex(0xff6b8b));
+    }
+
+    #[test]
+    fn accent_text_contrasts() {
+        assert_eq!(contrast_text(Color::from_hex(0xffe0a0)), Color::from_hex(0x14141c));
+        assert_eq!(contrast_text(Color::from_hex(0x3a1f4a)), Color::from_hex(0xffffff));
+        let t = Theme::from_conf("accent = #1a237e\n");
+        assert_eq!(t.accent_text, Color::from_hex(0xffffff));
     }
 
     #[test]
