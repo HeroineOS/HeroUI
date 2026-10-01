@@ -27,14 +27,20 @@ use crate::element::{relayout_parent, Ctx, Element};
 use crate::hover::is_hovered;
 use crate::theme::{Theme, ROUNDED};
 
-fn text_frame<S: 'static, M: 'static>(ctx: &Ctx<S, M>, size_delta: i32, dim: bool) -> Frame {
-    let t = ctx.theme();
+fn text_frame<S: 'static, M: 'static>(ctx: &Ctx<S, M>, size_delta: i32, dim: bool, bold: bool) -> Frame {
     let mut f = Frame::default();
     f.set_frame(FrameType::NoBox);
     f.set_align(Align::Left | Align::Inside | Align::Clip);
-    f.set_label_font(t.font());
-    f.set_label_size(t.font_size + size_delta);
-    f.set_label_color(if dim { t.text_dim } else { t.text });
+    let mut style = {
+        let mut f = f.clone();
+        move |t: &Theme| {
+            f.set_label_font(if bold { t.bold_font() } else { t.font() });
+            f.set_label_size(t.font_size + size_delta);
+            f.set_label_color(if dim { t.text_dim } else { t.text });
+        }
+    };
+    style(ctx.theme());
+    crate::theme::on_change(&f, style);
     f
 }
 
@@ -42,7 +48,7 @@ fn text_frame<S: 'static, M: 'static>(ctx: &Ctx<S, M>, size_delta: i32, dim: boo
 pub fn label<S: 'static, M: 'static>(text: &str) -> Element<S, M> {
     let text = text.to_string();
     Element::new(move |ctx| {
-        let mut f = text_frame(ctx, 0, false);
+        let mut f = text_frame(ctx, 0, false, false);
         f.set_label(&text);
         f.as_base_widget()
     })
@@ -52,8 +58,7 @@ pub fn label<S: 'static, M: 'static>(text: &str) -> Element<S, M> {
 pub fn heading<S: 'static, M: 'static>(text: &str) -> Element<S, M> {
     let text = text.to_string();
     Element::new(move |ctx| {
-        let mut f = text_frame(ctx, 6, false);
-        f.set_label_font(ctx.theme().bold_font());
+        let mut f = text_frame(ctx, 6, false, true);
         f.set_label(&text);
         f.as_base_widget()
     })
@@ -63,7 +68,7 @@ pub fn heading<S: 'static, M: 'static>(text: &str) -> Element<S, M> {
 pub fn caption<S: 'static, M: 'static>(text: &str) -> Element<S, M> {
     let text = text.to_string();
     Element::new(move |ctx| {
-        let mut f = text_frame(ctx, -2, true);
+        let mut f = text_frame(ctx, -2, true, false);
         f.set_label(&text);
         f.as_base_widget()
     })
@@ -72,7 +77,7 @@ pub fn caption<S: 'static, M: 'static>(text: &str) -> Element<S, M> {
 /// Text computed from state; the widget is only touched when it changes.
 pub fn text<S: 'static, M: 'static>(f: impl Fn(&S) -> String + 'static) -> Element<S, M> {
     Element::new(move |ctx| {
-        let frame = text_frame(ctx, 0, false);
+        let frame = text_frame(ctx, 0, false, false);
         let mut w = frame.clone();
         let mut last = None;
         ctx.bind(move |s| {
@@ -125,6 +130,10 @@ pub fn card<S: 'static, M: 'static>(children: Vec<Element<S, M>>) -> Element<S, 
         flex.end();
         flex.set_frame(ROUNDED);
         flex.set_color(t.surface);
+        crate::theme::on_change(&flex, {
+            let mut f = flex.clone();
+            move |t| f.set_color(t.surface)
+        });
         flex.set_margin(t.padding);
         flex.set_pad(t.spacing);
         ctx.build_children(&mut flex, children);
@@ -235,8 +244,8 @@ fn make_button<S: 'static, M: Clone + 'static>(
 ) -> Element<S, M> {
     let label = label.to_string();
     Element::new(move |ctx| {
-        let t = ctx.theme_rc();
         let mut b = custom_button(move |b| {
+            let t = crate::theme::current();
             let (bg, fg) = if primary { (t.accent, t.accent_text) } else { (t.surface_alt, t.text) };
             let bg = if !b.active_r() {
                 mix(bg, t.background, 0.6)
@@ -308,13 +317,13 @@ pub fn toggle<S: 'static, M: 'static>(
 ) -> Element<S, M> {
     let label = label.to_string();
     Element::new(move |ctx| {
-        let t = ctx.theme_rc();
         // `on`: the state; `pos`: where the knob is drawn, 0.0 (off) to 1.0.
         let on = Rc::new(Cell::new(false));
         let pos = crate::anim::Tween::new(0.0);
         let mut b = custom_button({
             let pos = pos.clone();
             move |b| {
+                let t = crate::theme::current();
                 let p = pos.get();
                 draw::set_font(t.font(), t.font_size);
                 draw::set_draw_color(if b.active_r() { t.text } else { t.text_dim });
@@ -367,8 +376,8 @@ pub fn checkbox<S: 'static, M: 'static>(
 ) -> Element<S, M> {
     let label = label.to_string();
     Element::new(move |ctx| {
-        let t = ctx.theme_rc();
         let b = bool_button(value, on_toggle, ctx, move |b, on| {
+            let t = crate::theme::current();
             let s = 18;
             let (x, y) = (b.x(), b.y() + (b.h() - s) / 2);
             let bg = if on { t.accent } else { t.surface_alt };
@@ -401,14 +410,14 @@ pub fn dropdown<S: 'static, M: 'static, T: AsRef<str> + 'static>(
     on_select: impl Fn(usize) -> M + 'static,
 ) -> Element<S, M> {
     Element::new(move |ctx| {
-        let t = ctx.theme_rc();
         // Copies of the state's options and selection, updated by the
         // binding only when they change.
         let opts: Rc<RefCell<Vec<String>>> = Rc::default();
         let sel = Rc::new(Cell::new(usize::MAX));
         let mut b = custom_button({
-            let (t, opts, sel) = (t.clone(), opts.clone(), sel.clone());
+            let (opts, sel) = (opts.clone(), sel.clone());
             move |b| {
+                let t = crate::theme::current();
                 let bg = if is_hovered(b) || b.value() { mix(t.surface_alt, Color::White, 0.1) } else { t.surface_alt };
                 let bg = if b.active_r() { bg } else { mix(bg, t.background, 0.6) };
                 draw::set_draw_color(bg);
@@ -431,7 +440,7 @@ pub fn dropdown<S: 'static, M: 'static, T: AsRef<str> + 'static>(
         let emit = ctx.emitter();
         let on_select = Rc::new(on_select);
         {
-            let (t, opts, sel) = (t.clone(), opts.clone(), sel.clone());
+            let (opts, sel) = (opts.clone(), sel.clone());
             // Open on press, like Fl_Choice: a Wayland popup grab must use
             // the serial of a button press (a release is refused).
             b.set_trigger(CallbackTrigger::Changed);
@@ -441,7 +450,7 @@ pub fn dropdown<S: 'static, M: 'static, T: AsRef<str> + 'static>(
                 }
                 let current = Some(sel.get()).filter(|&i| i < opts.borrow().len());
                 // Blocks in FLTK's menu loop until a pick or dismissal.
-                let picked = crate::popup::pick(b, &opts.borrow(), current, &t);
+                let picked = crate::popup::pick(b, &opts.borrow(), current, &crate::theme::current());
                 // The menu consumed the release; don't stay drawn pressed.
                 b.set_value(false);
                 if let Some(i) = picked {
@@ -495,15 +504,21 @@ fn input_element<S: 'static, M: 'static>(
     on_submit: Option<impl Fn() -> M + 'static>,
 ) -> Element<S, M> {
     Element::new(move |ctx| {
-        let t = ctx.theme_rc();
         let mut input = Input::default();
         input.set_frame(ROUNDED);
-        input.set_color(t.surface_alt);
-        input.set_text_color(t.text);
-        input.set_text_font(t.font());
-        input.set_text_size(t.font_size);
-        input.set_cursor_color(t.accent);
-        input.set_selection_color(t.accent);
+        let mut style = {
+            let mut input = input.clone();
+            move |t: &Theme| {
+                input.set_color(t.surface_alt);
+                input.set_text_color(t.text);
+                input.set_text_font(t.font());
+                input.set_text_size(t.font_size);
+                input.set_cursor_color(t.accent);
+                input.set_selection_color(t.accent);
+            }
+        };
+        style(ctx.theme());
+        crate::theme::on_change(&input, style);
         let emit = ctx.emitter();
         match on_submit {
             None => {
@@ -542,7 +557,6 @@ pub fn slider<S: 'static, M: 'static>(
     on_change: impl Fn(f64) -> M + 'static,
 ) -> Element<S, M> {
     Element::new(move |ctx| {
-        let t = ctx.theme_rc();
         let mut s = HorSlider::default();
         s.set_bounds(*range.start(), *range.end());
         // Draw it all ourselves. (A NoBox knob isn't enough: FLTK falls
@@ -550,6 +564,7 @@ pub fn slider<S: 'static, M: 'static>(
         s.set_frame(FrameType::NoBox);
         s.super_draw(false);
         s.draw(move |s| {
+            let t = crate::theme::current();
             let span = (s.maximum() - s.minimum()).max(f64::EPSILON);
             let frac = ((s.value() - s.minimum()) / span).clamp(0.0, 1.0);
             let knob = 16.min(s.h());
@@ -585,7 +600,6 @@ pub fn slider<S: 'static, M: 'static>(
 /// A read-only bar showing `value(state)` in 0.0..=1.0.
 pub fn progress<S: 'static, M: 'static>(value: impl Fn(&S) -> f64 + 'static) -> Element<S, M> {
     Element::new(move |ctx| {
-        let t = ctx.theme_rc();
         // The drawn fill glides to each new value (instantly with
         // animations off), so coarse updates still look smooth.
         let frac = crate::anim::Tween::new(0.0);
@@ -594,6 +608,7 @@ pub fn progress<S: 'static, M: 'static>(value: impl Fn(&S) -> f64 + 'static) -> 
         {
             let frac = frac.clone();
             f.draw(move |f| {
+                let t = crate::theme::current();
                 let h = 6.min(f.h());
                 let y = f.y() + (f.h() - h) / 2;
                 draw::set_draw_color(t.surface_alt);
@@ -639,7 +654,6 @@ pub fn canvas<S: 'static, M: 'static, D: PartialEq + 'static>(
     paint: impl Fn(&D, i32, i32, i32, i32, &Theme) + 'static,
 ) -> Element<S, M> {
     Element::new(move |ctx| {
-        let t = ctx.theme_rc();
         let cur: Rc<RefCell<Option<D>>> = Rc::default();
         let mut f = Frame::default();
         f.set_frame(FrameType::NoBox);
@@ -648,7 +662,7 @@ pub fn canvas<S: 'static, M: 'static, D: PartialEq + 'static>(
             f.draw(move |f| {
                 if let Some(d) = cur.borrow().as_ref() {
                     draw::push_clip(f.x(), f.y(), f.w(), f.h());
-                    paint(d, f.x(), f.y(), f.w(), f.h(), &t);
+                    paint(d, f.x(), f.y(), f.w(), f.h(), &crate::theme::current());
                     draw::pop_clip();
                 }
             });
@@ -671,13 +685,13 @@ pub fn canvas<S: 'static, M: 'static, D: PartialEq + 'static>(
 /// reused, so steady updates don't allocate.
 pub fn graph<S: 'static, M: 'static>(values: impl Fn(&S) -> &[f64] + 'static, max: f64) -> Element<S, M> {
     Element::new(move |ctx| {
-        let t = ctx.theme_rc();
         let cur: Rc<RefCell<Vec<f64>>> = Rc::default();
         let mut f = Frame::default();
         f.set_frame(FrameType::NoBox);
         {
             let cur = cur.clone();
             f.draw(move |f| {
+                let t = crate::theme::current();
                 let (x, y, w, h) = (f.x(), f.y(), f.w(), f.h());
                 draw::set_draw_color(t.surface_alt);
                 draw::draw_rounded_rectf(x, y, w, h, t.radius.min(h / 2).min(6));
@@ -737,14 +751,21 @@ pub fn scroll<S: 'static, M: 'static>(children: Vec<Element<S, M>>) -> Element<S
         sc.set_type(ScrollType::Vertical);
         // Opaque, so FLTK can scroll by copying pixels.
         sc.set_frame(FrameType::FlatBox);
-        sc.set_color(t.background);
         sc.set_scrollbar_size(10);
         let mut bar = sc.scrollbar();
         bar.set_frame(FrameType::FlatBox);
-        bar.set_color(t.background);
         bar.set_slider_frame(ROUNDED);
-        bar.set_selection_color(t.surface_alt);
-        bar.set_label_color(t.text_dim);
+        let mut style = {
+            let (mut sc, mut bar) = (sc.clone(), bar.clone());
+            move |t: &Theme| {
+                sc.set_color(t.background);
+                bar.set_color(t.background);
+                bar.set_selection_color(t.surface_alt);
+                bar.set_label_color(t.text_dim);
+            }
+        };
+        style(&t);
+        crate::theme::on_change(&sc, style);
 
         let mut content = Flex::default().column();
         content.end();

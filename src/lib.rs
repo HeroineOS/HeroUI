@@ -47,6 +47,7 @@ pub mod hover;
 mod popup;
 mod task;
 pub mod theme;
+mod watch;
 pub mod widgets;
 #[cfg(all(unix, not(target_os = "macos")))]
 mod x11;
@@ -267,8 +268,8 @@ pub fn run<A: App>(mut app: A, mut settings: Settings) -> Result<(), fltk::prelu
 
     let fl = fltk::app::App::default();
     drag_scroll::install();
-    let theme = Rc::new(app.theme());
-    theme.apply();
+    theme::set_current(app.theme());
+    let theme = theme::current();
 
     if settings.span && !layer {
         // On Wayland the compositor sizes a spanning panel; elsewhere use
@@ -307,6 +308,10 @@ pub fn run<A: App>(mut app: A, mut settings: Settings) -> Result<(), fltk::prelu
     }
     win.set_border(settings.decorated);
     win.set_color(theme.background);
+    theme::on_change(&win, {
+        let mut win = win.clone();
+        move |t| win.set_color(t.background)
+    });
 
     // Messages from widget callbacks (UI thread) queue here; results of
     // background work arrive over `rx` and wake the event loop.
@@ -376,8 +381,17 @@ pub fn run<A: App>(mut app: A, mut settings: Settings) -> Result<(), fltk::prelu
     // Messages it queued are handled on the first loop pass.
     fltk::app::awake();
 
+    // Follow theme.conf live (e.g. edits from Appearance).
+    let theme_changes = watch::theme_file();
+
     while fl.wait() {
         let mut changed = false;
+        if theme_changes.as_ref().is_some_and(|rx| rx.try_iter().count() > 0) {
+            let new = app.theme();
+            if new != *theme::current() {
+                theme::set_current(new);
+            }
+        }
         if close_requested.take() {
             match app.close_requested() {
                 Some(msg) => queue.borrow_mut().push_back(msg),
