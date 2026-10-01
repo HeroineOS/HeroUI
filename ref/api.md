@@ -57,6 +57,7 @@ thread (FLTK timeout, no extra thread). `sub.map(Msg::Child)` converts a compone
 | Modifier | Meaning |
 |---|---|
 | `.fixed(px)` | size along parent axis (height in column, width in row); otherwise shares space |
+| `.fixed_with(\|s\| px)` | same, computed from state (re-laid out when it changes) |
 | `.padding(px)` | inner margin (rows/columns default 0, cards theme padding) |
 | `.spacing(px)` | gap between children (default theme spacing) |
 | `.visible(\|s\| bool)` | hidden children take no space; layout re-runs |
@@ -69,6 +70,9 @@ raw fltk widget (see patterns.md).
 - `ctx.emitter() -> Rc<dyn Fn(M)>`: capture it in widget callbacks to send messages.
 - `ctx.bind(move |s: &S| ..)`: run after every update (and once at startup). Update the widget here.
 - `ctx.theme() -> &Theme`.
+- `ctx.size_hint()`: this element's size hint cell; set it if your element has a natural size
+  that changes (as `list` does), so containers like `scroll` can size it. `el.size_hint()`
+  reads a child's.
 - `ctx.build_children(&mut flex, children)`: build child Elements into a Flex, honoring `.fixed`.
   This is all a custom container needs.
 - `ctx.child()` + `ctx.into_bindings()`, `el.build(ctx)`, `el.fixed_size()`,

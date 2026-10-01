@@ -23,6 +23,7 @@ widget touched only when the value changed).
 | `progress(\|s\| f64)` | read-only bar, value 0.0..=1.0 |
 | `graph(\|s\| &[f64], max)` | filled line graph (history, oldest first); no allocation per update |
 | `canvas(\|s\| D, paint)` | custom drawing; `D: PartialEq`, redrawn only when it changes; `paint(&D, x, y, w, h, &Theme)` with `fltk::draw` |
+| `scroll(vec![..])` | vertically scrolling column (settings pages); children need `.fixed`, `.fixed_with` or a natural height (`list`); wheel + thin themed scrollbar |
 | `list(\|s\| usize, \|i\| Element)` | column rebuilt when count changes; items should be `.fixed` |
 | `embed(lens, map, child)` | plug in a component (api.md) |
 

@@ -6,6 +6,7 @@
 //! the value it shows actually changed. No widget tree is rebuilt or
 //! diffed, so an idle or lightly-updating app costs next to nothing.
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use fltk::group::Flex;
@@ -23,11 +24,13 @@ pub struct Ctx<S, M> {
     emit: Rc<dyn Fn(M)>,
     bindings: Vec<Binding<S>>,
     theme: Rc<Theme>,
+    /// Size hint of the element being built (see [`Ctx::size_hint`]).
+    hint: Option<Rc<Cell<i32>>>,
 }
 
 impl<S: 'static, M: 'static> Ctx<S, M> {
     pub(crate) fn new(emit: Rc<dyn Fn(M)>, theme: Rc<Theme>) -> Self {
-        Self { emit, bindings: Vec::new(), theme }
+        Self { emit, bindings: Vec::new(), theme, hint: None }
     }
 
     /// A cloneable handle that sends `M` to the app's `update`. Capture it in
@@ -79,10 +82,19 @@ impl<S: 'static, M: 'static> Ctx<S, M> {
     pub fn into_bindings(self) -> Vec<Binding<S>> {
         self.bindings
     }
+
+    /// Inside [`Element::new`]: the size hint of the element being built,
+    /// which an element whose natural size changes (like `list`) can update
+    /// for containers that size children themselves (like `scroll`).
+    /// A value below 0 means "no hint".
+    pub fn size_hint(&self) -> Option<Rc<Cell<i32>>> {
+        self.hint.clone()
+    }
 }
 
 type Build<S, M> = Box<dyn FnOnce(&mut Ctx<S, M>) -> Widget>;
 type Predicate<S> = Box<dyn Fn(&S) -> bool>;
+type SizeFn<S> = Box<dyn Fn(&S) -> i32>;
 
 /// A buildable piece of UI. Create with the functions in
 /// [`crate::widgets`], or [`Element::new`] to wrap any raw fltk widget.
@@ -93,6 +105,10 @@ pub struct Element<S, M> {
     spacing: Option<i32>,
     visible: Option<Predicate<S>>,
     enabled: Option<Predicate<S>>,
+    fixed_fn: Option<SizeFn<S>>,
+    /// Size along the parent's axis as last known: fixed, computed, or
+    /// natural (-1: none). Read by `scroll`.
+    hint: Rc<Cell<i32>>,
 }
 
 impl<S: 'static, M: 'static> Element<S, M> {
@@ -115,6 +131,8 @@ impl<S: 'static, M: 'static> Element<S, M> {
             spacing: None,
             visible: None,
             enabled: None,
+            fixed_fn: None,
+            hint: Rc::new(Cell::new(-1)),
         }
     }
 
@@ -122,6 +140,14 @@ impl<S: 'static, M: 'static> Element<S, M> {
     /// column, width inside a row. Unfixed children share the leftover space.
     pub fn fixed(mut self, px: i32) -> Self {
         self.fixed = Some(px);
+        self.hint.set(px);
+        self
+    }
+
+    /// Like [`Element::fixed`], with the size computed from state, e.g.
+    /// `.fixed_with(|s: &App| if s.expanded { 200 } else { 40 })`.
+    pub fn fixed_with(mut self, f: impl Fn(&S) -> i32 + 'static) -> Self {
+        self.fixed_fn = Some(Box::new(f));
         self
     }
 
@@ -156,11 +182,20 @@ impl<S: 'static, M: 'static> Element<S, M> {
         self.fixed
     }
 
+    /// The element's current size along its parent's axis (fixed, computed
+    /// by `fixed_with`, or natural for lists); below 0 if unknown. Shared:
+    /// it keeps updating after the element is built.
+    pub fn size_hint(&self) -> Rc<Cell<i32>> {
+        self.hint.clone()
+    }
+
     /// Builds the widget into the fltk group that is currently open and
     /// registers its bindings on `ctx`. Containers usually want
     /// [`Ctx::build_children`] instead.
     pub fn build(self, ctx: &mut Ctx<S, M>) -> Widget {
+        let outer = ctx.hint.replace(self.hint.clone());
         let widget = (self.build)(ctx);
+        ctx.hint = outer;
 
         if let Some(mut flex) = Flex::from_dyn_widget(&widget) {
             if let Some(p) = self.padding {
@@ -178,6 +213,22 @@ impl<S: 'static, M: 'static> Element<S, M> {
                 if last != Some(v) {
                     last = Some(v);
                     if v { w.show() } else { w.hide() }
+                    relayout_parent(&w);
+                }
+            });
+        }
+        if let Some(f) = self.fixed_fn {
+            let w = widget.clone();
+            let hint = self.hint.clone();
+            let mut first = true;
+            ctx.bind(move |s| {
+                let v = f(s).max(0);
+                if v != hint.get() || first {
+                    first = false;
+                    hint.set(v);
+                    if let Some(mut flex) = w.parent().and_then(|p| Flex::from_dyn_widget(&p)) {
+                        flex.fixed(&w, v);
+                    }
                     relayout_parent(&w);
                 }
             });

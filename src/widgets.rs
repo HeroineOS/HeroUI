@@ -145,7 +145,10 @@ pub fn list<S: 'static, M: 'static>(
         flex.set_pad(ctx.theme().spacing);
         flex.end();
         let child_ctx = ctx.child();
-        let mut state = ListState { flex: flex.clone(), len: None, bindings: Vec::new(), ctx: Some(child_ctx) };
+        // Without an explicit size, the list reports its natural height
+        // (its items' fixed heights) for containers like `scroll`.
+        let natural = ctx.size_hint().filter(|h| h.get() < 0);
+        let mut state = ListState { flex: flex.clone(), len: None, bindings: Vec::new(), ctx: Some(child_ctx), natural };
         ctx.bind(move |s| {
             let n = count(s);
             if state.len != Some(n) {
@@ -165,6 +168,7 @@ struct ListState<S, M> {
     bindings: Vec<crate::element::Binding<S>>,
     /// Template context (emitter + theme) cloned for each rebuild.
     ctx: Option<Ctx<S, M>>,
+    natural: Option<Rc<Cell<i32>>>,
 }
 
 impl<S: 'static, M: 'static> ListState<S, M> {
@@ -174,7 +178,12 @@ impl<S: 'static, M: 'static> ListState<S, M> {
         self.flex.clear();
         // The trailing spacer keeps items packed at the top instead of
         // stretched over the list.
-        let children = (0..n).map(item).chain(std::iter::once(spacer())).collect();
+        let children: Vec<Element<S, M>> = (0..n).map(item).collect();
+        if let Some(h) = &self.natural {
+            let items: i32 = children.iter().map(|c| c.fixed_size().unwrap_or(0)).sum();
+            h.set(items + self.flex.pad() * (n as i32 - 1).max(0));
+        }
+        let children = children.into_iter().chain(std::iter::once(spacer())).collect();
         ctx.build_children(&mut self.flex, children);
         self.bindings = ctx.into_bindings();
         self.ctx = Some(template);
@@ -709,5 +718,87 @@ pub fn graph<S: 'static, M: 'static>(values: impl Fn(&S) -> &[f64] + 'static, ma
             }
         });
         f.as_base_widget()
+    })
+}
+
+/// A vertically scrolling column, for content taller than its space (a
+/// settings page). Children need a height: `.fixed(px)`, `.fixed_with(..)`,
+/// or a natural one (`list`). The content grows and shrinks with them; the
+/// mouse wheel and the scrollbar scroll it.
+pub fn scroll<S: 'static, M: 'static>(children: Vec<Element<S, M>>) -> Element<S, M> {
+    use fltk::group::{Scroll, ScrollType};
+    Element::new(move |ctx| {
+        let t = ctx.theme_rc();
+        let mut sc = Scroll::default();
+        sc.set_type(ScrollType::Vertical);
+        // Opaque, so FLTK can scroll by copying pixels.
+        sc.set_frame(FrameType::FlatBox);
+        sc.set_color(t.background);
+        sc.set_scrollbar_size(10);
+        let mut bar = sc.scrollbar();
+        bar.set_frame(FrameType::FlatBox);
+        bar.set_color(t.background);
+        bar.set_slider_frame(ROUNDED);
+        bar.set_selection_color(t.surface_alt);
+        bar.set_label_color(t.text_dim);
+
+        let mut content = Flex::default().column();
+        content.end();
+        content.set_margin(0);
+        content.set_pad(t.spacing);
+        let hints: Vec<Rc<Cell<i32>>> = children.iter().map(|c| c.size_hint()).collect();
+        ctx.build_children(&mut content, children);
+        sc.end();
+
+        let kids: Vec<fltk::widget::Widget> = (0..content.children()).filter_map(|i| content.child(i)).collect();
+        let height = Rc::new(Cell::new(0));
+        // Width follows the scroll area, leaving room for the scrollbar
+        // when it shows.
+        let fit_width = {
+            let (height, content) = (height.clone(), content.clone());
+            move |sc: &Scroll| {
+                let bar = if height.get() > sc.h() { sc.scrollbar_size() } else { 0 };
+                let mut content = content.clone();
+                let (x, y) = (sc.x(), content.y());
+                content.resize(x, y, (sc.w() - bar).max(0), height.get().max(sc.h()));
+            }
+        };
+        {
+            let fit_width = fit_width.clone();
+            sc.resize_callback(move |sc, _, _, _, _| fit_width(sc));
+        }
+        let mut last: Vec<i32> = vec![-2; kids.len()];
+        let mut scw = sc.clone();
+        ctx.bind(move |_| {
+            let pad = content.pad();
+            let mut total = 0;
+            let mut shown = 0;
+            let mut changed = false;
+            for (i, (kid, hint)) in kids.iter().zip(&hints).enumerate() {
+                let h = hint.get().max(0);
+                if h != last[i] {
+                    last[i] = h;
+                    content.fixed(kid, h);
+                    changed = true;
+                }
+                if kid.visible() {
+                    total += h;
+                    shown += 1;
+                }
+            }
+            total += pad * (shown - 1).max(0);
+            if total != height.get() || changed {
+                height.set(total);
+                fit_width(&scw);
+                content.recalc();
+                // Don't stay scrolled past the end after shrinking.
+                let max = (total - scw.h()).max(0);
+                if scw.yposition() > max {
+                    scw.scroll_to(0, max);
+                }
+                scw.redraw();
+            }
+        });
+        sc.as_base_widget()
     })
 }
