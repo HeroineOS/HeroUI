@@ -46,7 +46,7 @@ mod popup;
 mod task;
 pub mod theme;
 pub mod widgets;
-#[cfg(all(unix, not(target_os = "macos"), not(feature = "wayland")))]
+#[cfg(all(unix, not(target_os = "macos")))]
 mod x11;
 
 use std::cell::{Cell, RefCell};
@@ -311,8 +311,8 @@ pub fn run<A: App>(mut app: A, settings: Settings) -> Result<(), fltk::prelude::
         b(&app);
     }
     win.show();
-    #[cfg(all(unix, not(target_os = "macos"), not(feature = "wayland")))]
-    if x11::needed(&settings) {
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if !on_wayland() && x11::needed(&settings) {
         x11::apply(&win, &settings);
     }
 
@@ -345,6 +345,12 @@ pub fn run<A: App>(mut app: A, settings: Settings) -> Result<(), fltk::prelude::
         hover::update();
     }
     Ok(())
+}
+
+/// True when FLTK is running on its Wayland backend (hybrid builds pick
+/// Wayland when available, X11 otherwise).
+pub fn on_wayland() -> bool {
+    unsafe { fltk_sys::fl::Fl_using_wayland() != 0 }
 }
 
 /// Starts a task's actions. Returns false if the app should quit.

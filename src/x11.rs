@@ -44,7 +44,8 @@ pub(crate) fn needed(s: &Settings) -> bool {
 /// window is mapped, so it is withdrawn, tagged and mapped again.
 pub(crate) fn apply(win: &Window, s: &Settings) {
     let d = fltk::app::display();
-    let w = win.raw_handle() as XWindow;
+    // An XID; typed as a pointer in Wayland-enabled (hybrid) builds.
+    let w = win.raw_handle() as usize as XWindow;
     let atom = |name: &str| {
         let c = CString::new(name).expect("atom name");
         unsafe { XInternAtom(d, c.as_ptr(), 0) }

@@ -1,159 +1,83 @@
-//! Themed popup list (dropdown menus). The window exists only while open:
-//! nothing is allocated for a closed dropdown.
+//! Dropdown lists, on FLTK's own menu code (`Fl_Menu_Item::pulldown`, the
+//! one `Fl_Choice` uses), styled from the theme. That makes the list a
+//! real popup on every backend: an `xdg_popup` on Wayland (placed and
+//! flipped by the compositor, grab handled), an override-redirect window
+//! on X11. Nothing is allocated while no list is open except one hidden,
+//! unparented `Fl_Menu_Button` per app that carries the styling.
 
-use std::cell::Cell;
-use std::rc::Rc;
+use std::cell::RefCell;
 
-use fltk::app;
-use fltk::draw;
-use fltk::enums::{Align, Event, Key};
+use fltk::enums::{Color, FrameType};
 use fltk::group::Group;
+use fltk::menu::{MenuButton, MenuFlag};
 use fltk::prelude::*;
-use fltk::window::Window;
 
-use crate::theme::Theme;
+use crate::theme::{Theme, ROUNDED};
 
-const MAX_ROWS: usize = 10;
+thread_local! {
+    static STYLE: RefCell<Option<MenuButton>> = const { RefCell::new(None) };
+}
 
-/// Opens a list of `items` under (or above, if it doesn't fit) `anchor`.
-/// `on_pick(i)` runs when the user picks one; any click outside, Escape or
-/// focus loss closes it.
-pub(crate) fn open<W: WidgetExt>(
-    anchor: &W,
-    items: Vec<String>,
-    selected: Option<usize>,
-    theme: Rc<Theme>,
-    on_pick: impl Fn(usize) + 'static,
-) {
-    let Some(parent) = anchor.window() else { return };
+/// Shows `items` in a list right under `anchor` and blocks until the user
+/// picks one (returns its index) or dismisses it (`None`). `selected` is
+/// drawn in the accent color.
+pub(crate) fn pick<W: WidgetExt>(anchor: &W, items: &[String], selected: Option<usize>, t: &Theme) -> Option<usize> {
     if items.is_empty() {
-        return;
+        return None;
     }
-    let t = theme;
-    let row_h = t.font_size + 14;
-    let pad = 4;
-    let rows = items.len().min(MAX_ROWS);
-    let (w, h) = (anchor.w().max(80), rows as i32 * row_h + 2 * pad);
-    let x = parent.x_root() + anchor.x();
-    let below = parent.y_root() + anchor.y() + anchor.h() + 2;
-    let (_, sy, _, sh) = app::screen_work_area(app::screen_num(x, below));
-    let y = if below + h > sy + sh { parent.y_root() + anchor.y() - h - 2 } else { below };
-
-    let hover = Rc::new(Cell::new(selected));
-    let top = Rc::new(Cell::new(selected.map_or(0, |s| s.saturating_sub(rows - 1)).min(items.len() - rows)));
-
-    // A top-level window, not a child of whatever group is open.
-    Group::set_current(None::<&Group>);
-    let mut pop = Window::new(x, y, w, h, None);
-    pop.end();
-    pop.set_border(false);
-    pop.set_override();
-    pop.set_color(t.surface);
-
-    let items = Rc::new(items);
-    {
-        let (items, hover, top, t) = (items.clone(), hover.clone(), top.clone(), t.clone());
-        pop.draw(move |p| {
-            draw::set_draw_color(t.surface);
-            draw::draw_rectf(0, 0, p.w(), p.h());
-            draw::set_draw_color(t.border);
-            draw::draw_rect(0, 0, p.w(), p.h());
-            draw::set_font(t.font(), t.font_size);
-            for row in 0..rows {
-                let i = top.get() + row;
-                let ry = pad + row as i32 * row_h;
-                if hover.get() == Some(i) {
-                    draw::set_draw_color(t.surface_alt);
-                    draw::draw_rounded_rectf(pad, ry, p.w() - 2 * pad, row_h, t.radius.min(row_h / 2));
-                }
-                draw::set_draw_color(if selected == Some(i) { t.accent } else { t.text });
-                draw::draw_text2(&items[i], pad + 10, ry, p.w() - 2 * pad - 20, row_h, Align::Left);
-            }
+    STYLE.with(|style| {
+        let mut style = style.borrow_mut();
+        let menu = style.get_or_insert_with(|| {
+            // Not part of any window; it only carries colors and fonts.
+            Group::set_current(None::<&Group>);
+            let mut m = MenuButton::default();
+            m.hide();
+            m
         });
-    }
-
-    let row_at = move |ey: i32, top: usize| {
-        let row = (ey - pad).div_euclid(row_h);
-        (0..rows as i32).contains(&row).then(|| top + row as usize)
-    };
-    let close = |p: &mut Window| {
-        app::set_grab(None::<Window>);
-        p.hide();
-        app::delete_widget(p.clone());
-    };
-    pop.handle(move |p, ev| {
-        let (ex, ey) = (app::event_x(), app::event_y());
-        let inside = ex >= 0 && ey >= 0 && ex < p.w() && ey < p.h();
-        let set_hover = |p: &mut Window, i: Option<usize>| {
-            if hover.replace(i) != i {
-                p.redraw();
-            }
-        };
-        match ev {
-            Event::Move | Event::Drag => {
-                set_hover(p, if inside { row_at(ey, top.get()) } else { None });
-                true
-            }
-            Event::Push => {
-                if !inside {
-                    close(p);
+        menu.clear();
+        // FLTK styles the list from the menu widget: box/color for the
+        // list, down_box/selection_color for the highlighted row.
+        menu.set_frame(FrameType::FlatBox);
+        menu.set_color(t.surface);
+        menu.set_down_frame(ROUNDED);
+        menu.set_selection_color(crate::widgets::mix(t.surface_alt, Color::White, 0.05));
+        menu.set_text_font(t.font());
+        menu.set_text_size(t.font_size);
+        menu.set_text_color(t.text);
+        for (i, item) in items.iter().enumerate() {
+            let idx = menu.add(&escape(item), fltk::enums::Shortcut::None, MenuFlag::Normal, |_| {});
+            if Some(i) == selected {
+                if let Some(mut it) = menu.at(idx) {
+                    it.set_label_color(t.accent);
                 }
-                true
             }
-            Event::Released => {
-                if let Some(i) = inside.then(|| row_at(ey, top.get())).flatten() {
-                    close(p);
-                    on_pick(i);
-                }
-                true
-            }
-            Event::MouseWheel => {
-                let max = items.len() - rows;
-                let next = (top.get() as i32 + app::event_dy_value().signum()).clamp(0, max as i32) as usize;
-                if next != top.get() {
-                    top.set(next);
-                    p.redraw();
-                }
-                true
-            }
-            Event::KeyDown => {
-                let last = items.len() - 1;
-                let cur = hover.get();
-                match app::event_key() {
-                    Key::Escape => close(p),
-                    Key::Enter | Key::KPEnter => {
-                        if let Some(i) = cur {
-                            close(p);
-                            on_pick(i);
-                        }
-                    }
-                    k @ (Key::Up | Key::Down) => {
-                        let i = match (k == Key::Down, cur) {
-                            (true, None) => 0,
-                            (true, Some(i)) => (i + 1).min(last),
-                            (false, None) => last,
-                            (false, Some(i)) => i.saturating_sub(1),
-                        };
-                        // Keep the highlighted row in view.
-                        if i < top.get() {
-                            top.set(i);
-                        } else if i >= top.get() + rows {
-                            top.set(i + 1 - rows);
-                        }
-                        hover.set(Some(i));
-                        p.redraw();
-                    }
-                    _ => {}
-                }
-                true
-            }
-            Event::Hide => {
-                app::set_grab(None::<Window>);
-                false
-            }
-            _ => false,
         }
-    });
-    pop.show();
-    app::set_grab(Some(pop));
+        let list = menu.menu()?;
+        // Spacing between rows, like the rest of HeroUI.
+        let spacing = fltk::app::menu_linespacing();
+        fltk::app::set_menu_linespacing(t.font_size / 2 + 6);
+        let picked = list.pulldown(anchor.x(), anchor.y(), anchor.w(), anchor.h(), None, Some(&*menu));
+        fltk::app::set_menu_linespacing(spacing);
+        let picked = picked?;
+        (0..items.len() as i32).position(|i| menu.at(i).as_ref() == Some(&picked))
+    })
+}
+
+/// Menu labels are parsed by `Fl_Menu_::add` ('/' makes submenus, '\\'
+/// escapes, a leading '_' adds a divider) and drawn as FLTK labels ('&'
+/// underlines a shortcut, '@' starts a symbol). Show text literally.
+fn escape(label: &str) -> String {
+    let mut out = String::with_capacity(label.len() + 4);
+    for c in label.chars() {
+        match c {
+            '\\' | '/' | '_' => {
+                out.push('\\');
+                out.push(c);
+            }
+            '&' => out.push_str("&&"),
+            '@' => out.push_str("@@"),
+            _ => out.push(c),
+        }
+    }
+    out
 }

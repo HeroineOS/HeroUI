@@ -392,10 +392,21 @@ pub fn dropdown<S: 'static, M: 'static, T: AsRef<str> + 'static>(
         let on_select = Rc::new(on_select);
         {
             let (t, opts, sel) = (t.clone(), opts.clone(), sel.clone());
+            // Open on press, like Fl_Choice: a Wayland popup grab must use
+            // the serial of a button press (a release is refused).
+            b.set_trigger(CallbackTrigger::Changed);
             b.set_callback(move |b| {
-                let (emit, on_select) = (emit.clone(), on_select.clone());
+                if !b.value() {
+                    return;
+                }
                 let current = Some(sel.get()).filter(|&i| i < opts.borrow().len());
-                crate::popup::open(b, opts.borrow().clone(), current, t.clone(), move |i| emit(on_select(i)));
+                // Blocks in FLTK's menu loop until a pick or dismissal.
+                let picked = crate::popup::pick(b, &opts.borrow(), current, &t);
+                // The menu consumed the release; don't stay drawn pressed.
+                b.set_value(false);
+                if let Some(i) = picked {
+                    emit(on_select(i));
+                }
             });
         }
         let mut w = b.clone();
