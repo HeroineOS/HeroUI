@@ -15,6 +15,14 @@ fltk-sys = "1.5"
 default = ["wayland"]
 # Native Wayland (FLTK hybrid build): Wayland when available, X11 otherwise.
 wayland = ["fltk/use-wayland"]
+# Native panels, desktop widgets and notifications on Wayland
+# (wlr-layer-shell). Needs the HeroineOS fltk-sys fork; add to the app's
+# Cargo.toml:
+#   [patch.crates-io]
+#   fltk-sys = { git = "https://github.com/HeroineOS/fltk-sys" }
+# Without it (or on compositors without layer-shell, like GNOME), shell
+# windows run on XWayland with X11 window hints.
+layer-shell = ["wayland"]
 # Task::future on a single shared current-thread runtime.
 tokio = ["dep:tokio"]
 

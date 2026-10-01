@@ -48,6 +48,8 @@ pub mod theme;
 pub mod widgets;
 #[cfg(all(unix, not(target_os = "macos")))]
 mod x11;
+#[cfg(feature = "wayland")]
+mod wayland;
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -121,6 +123,9 @@ pub struct Settings {
     /// Reserve screen space along an edge so maximized windows don't cover
     /// this one (panels, docks).
     pub reserve: Option<(Edge, i32)>,
+    /// Make the window span the whole reserved edge, whatever the screen
+    /// size (set by [`Settings::panel`]).
+    pub span: bool,
 }
 
 /// Window types from the EWMH spec. On X11 (and XWayland compositors that
@@ -165,31 +170,28 @@ impl Settings {
             sticky: false,
             skip_taskbar: false,
             reserve: None,
+            span: false,
         }
     }
 
-    /// A panel/dock along `edge` of the primary screen, `thickness` px
-    /// deep: borderless, fixed size, on every workspace, space reserved.
+    /// A panel/dock along `edge` of the screen, `thickness` px deep,
+    /// spanning the whole edge: borderless, on every workspace, space
+    /// reserved. A layer-shell surface on Wayland (feature `layer-shell`).
     pub fn panel(title: &str, edge: Edge, thickness: i32) -> Self {
-        let (sx, sy, sw, sh) = fltk::app::screen_xywh(0);
-        let (x, y, w, h) = match edge {
-            Edge::Top => (sx, sy, sw, thickness),
-            Edge::Bottom => (sx, sy + sh - thickness, sw, thickness),
-            Edge::Left => (sx, sy, thickness, sh),
-            Edge::Right => (sx + sw - thickness, sy, thickness, sh),
-        };
-        Self::new(title)
-            .size(w, h)
-            .position(x, y)
+        let mut s = Self::new(title)
+            .size(thickness, thickness)
             .resizable(false)
             .decorated(false)
             .kind(WindowKind::Dock)
             .sticky(true)
-            .reserve(edge, thickness)
+            .reserve(edge, thickness);
+        s.span = true;
+        s
     }
 
     /// A desktop widget (conky-like) at `x, y`: borderless, below other
-    /// windows, on every workspace, not in the taskbar.
+    /// windows, on every workspace, not in the taskbar. A layer-shell
+    /// surface on Wayland (feature `layer-shell`).
     pub fn desktop_widget(title: &str, x: i32, y: i32, w: i32, h: i32) -> Self {
         Self::new(title)
             .size(w, h)
@@ -248,17 +250,44 @@ impl Settings {
 }
 
 /// Opens the window and runs the app until it's closed or `Task::quit`.
-pub fn run<A: App>(mut app: A, settings: Settings) -> Result<(), fltk::prelude::FltkError> {
+pub fn run<A: App>(mut app: A, mut settings: Settings) -> Result<(), fltk::prelude::FltkError> {
+    // Shell windows: pick the backend before FLTK opens its display.
+    #[cfg(feature = "wayland")]
+    let layer = wayland::prepare_backend(&settings);
+    #[cfg(not(feature = "wayland"))]
+    let layer = false;
+
     let fl = fltk::app::App::default();
     let theme = Rc::new(app.theme());
     theme.apply();
 
+    if settings.span && !layer {
+        // On Wayland the compositor sizes a spanning panel; elsewhere use
+        // the first screen.
+        if let Some((edge, px)) = settings.reserve {
+            let (sx, sy, sw, sh) = fltk::app::screen_xywh(0);
+            let (x, y, w, h) = match edge {
+                Edge::Top => (sx, sy, sw, px),
+                Edge::Bottom => (sx, sy + sh - px, sw, px),
+                Edge::Left => (sx, sy, px, sh),
+                Edge::Right => (sx + sw - px, sy, px, sh),
+            };
+            settings.size = (w, h);
+            settings.position = Some((x, y));
+        }
+    }
+
     let (w, h) = settings.size;
     let mut win = Window::default().with_size(w, h).with_label(&settings.title);
-    if let Some((x, y)) = settings.position {
+    if let Some((x, y)) = settings.position.filter(|_| !layer) {
         win.set_pos(x, y);
     }
-    if let Some(class) = &settings.class {
+    // The X11 class / Wayland app_id compositors match rules on; default
+    // to the executable's name rather than FLTK's generic "FLTK".
+    let class = settings.class.clone().or_else(|| {
+        std::env::current_exe().ok()?.file_stem()?.to_str().map(str::to_owned)
+    });
+    if let Some(class) = &class {
         win.set_xclass(class);
     }
     win.set_border(settings.decorated);
@@ -278,8 +307,13 @@ pub fn run<A: App>(mut app: A, settings: Settings) -> Result<(), fltk::prelude::
     let mut bindings = ctx.into_bindings();
     let mut root = root;
     root.resize(0, 0, w, h);
-    if settings.resizable {
-        win.resizable(&root);
+    // The root always follows the window's size (the compositor sizes
+    // panels; WMs may resize anything). "Not resizable" means the user
+    // can't resize it, which a fixed size range says. A layer-shell
+    // window gets its size from the compositor.
+    win.resizable(&root);
+    if !settings.resizable && !layer {
+        win.size_range(w, h, w, h);
     }
     win.end();
 
@@ -310,6 +344,11 @@ pub fn run<A: App>(mut app: A, settings: Settings) -> Result<(), fltk::prelude::
     for b in bindings.iter_mut() {
         b(&app);
     }
+    #[cfg(feature = "layer-shell")]
+    if layer {
+        wayland::apply_layer(&win, &settings);
+    }
+    let _ = layer;
     win.show();
     #[cfg(all(unix, not(target_os = "macos")))]
     if !on_wayland() && x11::needed(&settings) {
