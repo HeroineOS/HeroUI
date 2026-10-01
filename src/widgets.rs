@@ -302,7 +302,7 @@ pub fn toggle<S: 'static, M: 'static>(
         let t = ctx.theme_rc();
         // `on`: the state; `pos`: where the knob is drawn, 0.0 (off) to 1.0.
         let on = Rc::new(Cell::new(false));
-        let pos = Rc::new(Cell::new(0.0f64));
+        let pos = crate::anim::Tween::new(0.0);
         let mut b = custom_button({
             let pos = pos.clone();
             move |b| {
@@ -337,18 +337,14 @@ pub fn toggle<S: 'static, M: 'static>(
             }
             on.set(v);
             let to = if v { 1.0 } else { 0.0 };
+            let mut w = w.clone();
             if first.replace(false) || !w.visible_r() {
                 // Initial state: no animation.
                 pos.set(to);
-                let mut w = w.clone();
                 w.redraw();
                 return;
             }
-            let (from, pos, mut w) = (pos.get(), pos.clone(), w.clone());
-            crate::anim::animate(crate::anim::SHORT, move |k| {
-                pos.set(from + (to - from) * k);
-                w.redraw();
-            });
+            pos.animate_to(to, crate::anim::SHORT, move || w.redraw());
         });
         b.as_base_widget()
     })
@@ -471,6 +467,24 @@ pub fn text_input<S: 'static, M: 'static>(
     value: impl Fn(&S) -> String + 'static,
     on_change: impl Fn(String) -> M + 'static,
 ) -> Element<S, M> {
+    input_element(value, on_change, None::<fn() -> M>)
+}
+
+/// Like [`text_input`], and pressing Enter sends `on_submit` (add an item,
+/// run a search, confirm a form).
+pub fn text_input_submit<S: 'static, M: Clone + 'static>(
+    value: impl Fn(&S) -> String + 'static,
+    on_change: impl Fn(String) -> M + 'static,
+    on_submit: M,
+) -> Element<S, M> {
+    input_element(value, on_change, Some(move || on_submit.clone()))
+}
+
+fn input_element<S: 'static, M: 'static>(
+    value: impl Fn(&S) -> String + 'static,
+    on_change: impl Fn(String) -> M + 'static,
+    on_submit: Option<impl Fn() -> M + 'static>,
+) -> Element<S, M> {
     Element::new(move |ctx| {
         let t = ctx.theme_rc();
         let mut input = Input::default();
@@ -481,9 +495,26 @@ pub fn text_input<S: 'static, M: 'static>(
         input.set_text_size(t.font_size);
         input.set_cursor_color(t.accent);
         input.set_selection_color(t.accent);
-        input.set_trigger(CallbackTrigger::Changed);
         let emit = ctx.emitter();
-        input.set_callback(move |i| emit(on_change(i.value())));
+        match on_submit {
+            None => {
+                input.set_trigger(CallbackTrigger::Changed);
+                input.set_callback(move |i| emit(on_change(i.value())));
+            }
+            Some(submit) => {
+                // Called for edits and for Enter (changed or not).
+                input.set_trigger(CallbackTrigger::EnterKeyChanged);
+                input.set_callback(move |i| {
+                    let enter = fltk::app::event() == fltk::enums::Event::KeyDown
+                        && matches!(fltk::app::event_key(), fltk::enums::Key::Enter | fltk::enums::Key::KPEnter);
+                    if enter {
+                        emit(submit());
+                    } else {
+                        emit(on_change(i.value()));
+                    }
+                });
+            }
+        }
         let mut w = input.clone();
         ctx.bind(move |s| {
             let v = value(s);
@@ -546,8 +577,11 @@ pub fn slider<S: 'static, M: 'static>(
 pub fn progress<S: 'static, M: 'static>(value: impl Fn(&S) -> f64 + 'static) -> Element<S, M> {
     Element::new(move |ctx| {
         let t = ctx.theme_rc();
-        let frac = Rc::new(Cell::new(0.0f64));
+        // The drawn fill glides to each new value (instantly with
+        // animations off), so coarse updates still look smooth.
+        let frac = crate::anim::Tween::new(0.0);
         let mut f = Frame::default();
+        f.set_frame(FrameType::NoBox);
         {
             let frac = frac.clone();
             f.draw(move |f| {
@@ -562,12 +596,22 @@ pub fn progress<S: 'static, M: 'static>(value: impl Fn(&S) -> f64 + 'static) -> 
                 }
             });
         }
-        let mut w = f.clone();
+        let w = f.clone();
+        let target = Cell::new(f64::NAN);
         ctx.bind(move |s| {
             let v = value(s).clamp(0.0, 1.0);
-            if (frac.get() - v).abs() > 0.001 {
+            if (target.get() - v).abs() <= 0.001 {
+                return;
+            }
+            let first = target.get().is_nan();
+            target.set(v);
+            let mut w = w.clone();
+            if first || !w.visible_r() {
                 frac.set(v);
-                w.redraw();
+                repaint(&mut w);
+            } else {
+                // Shrinking needs the background repainted, so repaint().
+                frac.animate_to(v, std::time::Duration::from_millis(120), move || repaint(&mut w));
             }
         });
         f.as_base_widget()

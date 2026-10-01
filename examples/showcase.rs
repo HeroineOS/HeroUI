@@ -187,7 +187,8 @@ impl App for Showcase {
             .fixed(34),
             card(vec![
                 row(vec![
-                    text_input(|s: &Showcase| s.draft.clone(), Msg::Draft),
+                    // Enter adds too.
+                    text_input_submit(|s: &Showcase| s.draft.clone(), Msg::Draft, Msg::Add),
                     primary_button("Add", Msg::Add)
                         .fixed(70)
                         .enabled(|s: &Showcase| !s.draft.trim().is_empty()),

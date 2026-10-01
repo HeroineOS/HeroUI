@@ -15,6 +15,7 @@ widget touched only when the value changed).
 | `button("txt", msg)` | `msg: M + Clone`, sent on click |
 | `primary_button("txt", msg)` | accent colored, for the main action |
 | `text_input(\|s\| String, \|String\| M)` | sends on every edit; not overwritten while it matches state (cursor stays) |
+| `text_input_submit(\|s\| String, \|String\| M, msg)` | same, and Enter sends `msg` (add/search/confirm) |
 | `toggle("label", \|s\| bool, \|bool\| M)` | switch, label on the left; give it `.fixed(28)` in a column |
 | `checkbox("label", \|s\| bool, \|bool\| M)` | box + label on the right |
 | `dropdown(\|s\| &[T], \|s\| usize, \|usize\| M)` | `T: AsRef<str>`; static list `\|_: &S\| CONST_SLICE` or from state `\|s\| &s.names`; list is FLTK's own menu popup (as Fl_Choice), themed; native xdg_popup on Wayland; opens on press and blocks in FLTK's menu loop until a pick |
@@ -31,7 +32,10 @@ Helpers for your own widgets: `custom_button(draw)` (cheap clickable base), `rep
 (redraw with background), `heroui::hover::is_hovered(&w)`, `mix(a, b, t)` (blend colors),
 `heroui::anim::animate(heroui::anim::SHORT, move |t| { pos.set(..t..); w.redraw() })` for
 transitions: eased t 0→1 over ~150 ms, repaints only that widget while it runs, and jumps
-straight to 1.0 when the theme has `animations = false`. `toggle` uses it for its knob.
+straight to 1.0 when the theme has `animations = false`. `toggle` uses it for its knob. For a value that keeps changing, `heroui::anim::Tween`:
+`tween.animate_to(target, duration, move || w.redraw())` (a new target cancels the running
+move; `progress` uses it so coarse updates glide).
 
 Not built in yet (use `Element::new`, see patterns.md and `examples/custom_widget.rs`):
-multi-line text, scroll area, images/icons, menus, tabs, Enter-to-submit on text_input.
+multi-line text, scroll area, images/icons, menus, tabs, popovers (a dropdown panel with
+arbitrary content, e.g. a volume slider in a bar).

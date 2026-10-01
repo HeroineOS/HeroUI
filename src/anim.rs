@@ -42,6 +42,49 @@ pub fn animate(duration: Duration, mut frame: impl FnMut(f64) + 'static) {
     });
 }
 
+/// A value that moves smoothly to new targets: what a widget draws (a
+/// knob position, a bar's fill) while its state changes. Starting a new
+/// move cancels the running one, so quick changes never fight.
+#[derive(Clone)]
+pub struct Tween(std::rc::Rc<TweenInner>);
+
+struct TweenInner {
+    value: Cell<f64>,
+    /// Bumped by every move; stale animation frames see a different one.
+    generation: Cell<u32>,
+}
+
+impl Tween {
+    pub fn new(value: f64) -> Tween {
+        Tween(std::rc::Rc::new(TweenInner { value: Cell::new(value), generation: Cell::new(0) }))
+    }
+
+    /// The value to draw now.
+    pub fn get(&self) -> f64 {
+        self.0.value.get()
+    }
+
+    /// Jumps to `value`, cancelling any running move.
+    pub fn set(&self, value: f64) {
+        self.0.generation.set(self.0.generation.get().wrapping_add(1));
+        self.0.value.set(value);
+    }
+
+    /// Moves from the current value to `target` over `duration`, calling
+    /// `redraw` on every frame (it should repaint the widget).
+    pub fn animate_to(&self, target: f64, duration: Duration, mut redraw: impl FnMut() + 'static) {
+        let generation = self.0.generation.get().wrapping_add(1);
+        self.0.generation.set(generation);
+        let (from, me) = (self.get(), self.clone());
+        animate(duration, move |t| {
+            if me.0.generation.get() == generation {
+                me.0.value.set(from + (target - from) * t);
+                redraw();
+            }
+        });
+    }
+}
+
 /// Cubic ease-out: fast start, gentle stop.
 pub fn ease_out(t: f64) -> f64 {
     1.0 - (1.0 - t).powi(3)
@@ -56,6 +99,17 @@ mod tests {
         assert_eq!(ease_out(0.0), 0.0);
         assert_eq!(ease_out(1.0), 1.0);
         assert!(ease_out(0.5) > 0.5);
+    }
+
+    #[test]
+    fn tween_set_and_disabled_move() {
+        set_enabled(false);
+        let t = Tween::new(0.0);
+        t.animate_to(1.0, SHORT, || {});
+        assert_eq!(t.get(), 1.0);
+        t.set(0.25);
+        assert_eq!(t.get(), 0.25);
+        set_enabled(true);
     }
 
     #[test]
