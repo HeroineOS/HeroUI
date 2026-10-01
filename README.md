@@ -52,8 +52,11 @@ libwayland-dev wayland-protocols libxkbcommon-dev libdbus-1-dev`.
 
 ## Wayland and desktop-shell windows
 
-Regular apps need nothing: stock fltk-rs runs them natively on Wayland (popups and
-dropdowns included). Panels, desktop widgets and notifications (`WindowKind::Dock`,
+Stock fltk-rs runs apps natively on Wayland (popups and dropdowns included), with one
+gap: FLTK 1.4 ignores Wayland **touch** input. The [HeroineOS/fltk-sys](https://github.com/HeroineOS/fltk-sys)
+fork adds it (the first finger acts as the left mouse button, like on X11), so HeroineOS
+apps use the fork; add the `[patch]` below even without `layer-shell` if touchscreens
+matter. Panels, desktop widgets and notifications (`WindowKind::Dock`,
 `Desktop`, `Notification`) need the wlr-layer-shell protocol, which upstream FLTK doesn't
 support. Shell apps enable it with the `layer-shell` feature and the
 [HeroineOS/fltk-sys](https://github.com/HeroineOS/fltk-sys) fork (fltk-sys 1.5.23 plus
