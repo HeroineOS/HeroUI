@@ -39,7 +39,8 @@ jobs:
             cargo build --release --examples --features layer-shell \
               --config "patch.crates-io.fltk-sys.git=\"https://github.com/HeroineOS/fltk-sys\""
             strip target/release/examples/showcase target/release/examples/counter \
-              target/release/examples/custom_widget target/release/examples/sysmon target/release/examples/panel
+              target/release/examples/custom_widget target/release/examples/sysmon target/release/examples/panel \
+              target/release/examples/scrolling
             cargo deb --no-build
             mkdir -p out && cp target/debian/*.deb out/
             dpkg-deb -I out/*.deb | sed -n "/Package/,/Description/p"
@@ -67,4 +68,4 @@ jobs:
           ls -l dist
           gh release create "$GITHUB_REF_NAME" dist/*.deb --repo "$GITHUB_REPOSITORY" --draft \
             --title "HeroUI $GITHUB_REF_NAME demos" \
-            --notes "Example programs as a Debian package. Install with: sudo apt install ./heroui-demos_*_<arch>.deb, then run heroui-showcase, heroui-counter, heroui-custom-widget, heroui-sysmon or heroui-panel."
+            --notes "Example programs as a Debian package. Install with: sudo apt install ./heroui-demos_*_<arch>.deb, then run heroui-showcase, heroui-counter, heroui-custom-widget, heroui-sysmon, heroui-panel or heroui-scrolling."

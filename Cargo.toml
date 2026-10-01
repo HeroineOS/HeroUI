@@ -1,6 +1,6 @@
 [package]
 name = "heroui"
-version = "0.1.2"
+version = "0.1.3"
 description = "Lightweight Elm-style UI library on fltk-rs for HeroineOS apps"
 repository = "https://github.com/HeroineOS/HeroUI"
 license = "MIT OR Apache-2.0"
@@ -44,12 +44,14 @@ depends = "$auto"
 extended-description = """\
 Example programs of HeroUI, the lightweight UI library of HeroineOS: \
 heroui-showcase (widgets tour), heroui-counter, heroui-custom-widget, \
-heroui-sysmon (conky-like desktop widget) and heroui-panel (a top panel)."""
+heroui-sysmon (conky-like desktop widget), heroui-panel (a top panel) and \
+heroui-scrolling (a long scrolling settings page)."""
 assets = [
     ["target/release/examples/showcase", "usr/bin/heroui-showcase", "755"],
     ["target/release/examples/counter", "usr/bin/heroui-counter", "755"],
     ["target/release/examples/custom_widget", "usr/bin/heroui-custom-widget", "755"],
     ["target/release/examples/sysmon", "usr/bin/heroui-sysmon", "755"],
     ["target/release/examples/panel", "usr/bin/heroui-panel", "755"],
+    ["target/release/examples/scrolling", "usr/bin/heroui-scrolling", "755"],
     ["README.md", "usr/share/doc/heroui-demos/README.md", "644"],
 ]
