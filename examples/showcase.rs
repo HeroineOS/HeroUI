@@ -90,6 +90,8 @@ struct Showcase {
     items: Vec<String>,
     load: LoadAvg,
     clock: String,
+    /// 0.0..=1.0 while a (simulated) download runs.
+    download: Option<f64>,
 }
 
 #[derive(Clone)]
@@ -102,6 +104,8 @@ enum Msg {
     Remove(usize),
     Load(LoadMsg),
     Tick,
+    StartDownload,
+    DownloadStep,
 }
 
 impl App for Showcase {
@@ -124,6 +128,21 @@ impl App for Showcase {
                 }
             }
             Msg::Load(m) => return self.load.update(m).map(Msg::Load),
+            // A stand-in for real background work reporting progress: each
+            // step sleeps off the UI thread, then reports back.
+            Msg::StartDownload => {
+                self.download = Some(0.0);
+                return Task::perform(download_step);
+            }
+            Msg::DownloadStep => {
+                let p = self.download.unwrap_or(0.0) + 0.04;
+                if p >= 1.0 {
+                    self.download = None;
+                } else {
+                    self.download = Some(p);
+                    return Task::perform(download_step);
+                }
+            }
             Msg::Tick => {
                 let secs = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -156,9 +175,16 @@ impl App for Showcase {
                 ])
                 .fixed(28)
                 .enabled(|s: &Showcase| s.wifi),
-                progress(|s: &Showcase| s.volume / 100.0).fixed(10),
             ])
-            .fixed(122),
+            .fixed(92),
+            row(vec![
+                primary_button("Download", Msg::StartDownload)
+                    .fixed(110)
+                    .enabled(|s: &Showcase| s.download.is_none()),
+                progress(|s: &Showcase| s.download.unwrap_or(0.0)),
+                text(|s: &Showcase| s.download.map(|p| format!("{:.0}%", p * 100.0)).unwrap_or_default()).fixed(44),
+            ])
+            .fixed(34),
             card(vec![
                 row(vec![
                     text_input(|s: &Showcase| s.draft.clone(), Msg::Draft),
@@ -190,6 +216,11 @@ impl App for Showcase {
         subs.extend(LoadAvg::subscriptions().into_iter().map(|s| s.map(Msg::Load)));
         subs
     }
+}
+
+fn download_step() -> Msg {
+    std::thread::sleep(Duration::from_millis(100));
+    Msg::DownloadStep
 }
 
 fn main() {

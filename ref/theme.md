@@ -19,6 +19,7 @@ spacing = 8            # gap in rows/columns
 padding = 12           # card inner margin
 font_size = 14
 font = Inter           # empty = FLTK default sans
+animations = true      # false = reduced motion / battery saving: transitions jump to the end
 ```
 
 API: `Theme::dark()`, `Theme::light()`, `Theme::load()`, `Theme::path()`,

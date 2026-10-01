@@ -290,7 +290,8 @@ fn bool_button<S: 'static, M: 'static>(
     b
 }
 
-/// An on/off switch with a label to its left.
+/// An on/off switch with a label to its left. The knob slides between
+/// states (unless the theme turns animations off).
 pub fn toggle<S: 'static, M: 'static>(
     label: &str,
     value: impl Fn(&S) -> bool + 'static,
@@ -299,21 +300,55 @@ pub fn toggle<S: 'static, M: 'static>(
     let label = label.to_string();
     Element::new(move |ctx| {
         let t = ctx.theme_rc();
-        let b = bool_button(value, on_toggle, ctx, move |b, on| {
-            draw::set_font(t.font(), t.font_size);
-            draw::set_draw_color(if b.active_r() { t.text } else { t.text_dim });
-            draw::draw_text2(&label, b.x(), b.y(), b.w() - 48, b.h(), Align::Left);
-            let (tw, th) = (40, 22);
-            let (tx, ty) = (b.x() + b.w() - tw, b.y() + (b.h() - th) / 2);
-            let track = if on { t.accent } else { t.surface_alt };
-            let track = if is_hovered(b) { mix(track, Color::White, 0.1) } else { track };
-            let track = if b.active_r() { track } else { mix(track, t.background, 0.6) };
-            draw::set_draw_color(track);
-            draw::draw_rounded_rectf(tx, ty, tw, th, th / 2);
-            let knob = th - 6;
-            let kx = if on { tx + tw - knob - 3 } else { tx + 3 };
-            draw::set_draw_color(if on { t.accent_text } else { t.text_dim });
-            draw::draw_pie(kx, ty + 3, knob, knob, 0.0, 360.0);
+        // `on`: the state; `pos`: where the knob is drawn, 0.0 (off) to 1.0.
+        let on = Rc::new(Cell::new(false));
+        let pos = Rc::new(Cell::new(0.0f64));
+        let mut b = custom_button({
+            let pos = pos.clone();
+            move |b| {
+                let p = pos.get();
+                draw::set_font(t.font(), t.font_size);
+                draw::set_draw_color(if b.active_r() { t.text } else { t.text_dim });
+                draw::draw_text2(&label, b.x(), b.y(), b.w() - 48, b.h(), Align::Left);
+                let (tw, th) = (40, 22);
+                let (tx, ty) = (b.x() + b.w() - tw, b.y() + (b.h() - th) / 2);
+                let track = mix(t.surface_alt, t.accent, p as f32);
+                let track = if is_hovered(b) { mix(track, Color::White, 0.1) } else { track };
+                let track = if b.active_r() { track } else { mix(track, t.background, 0.6) };
+                draw::set_draw_color(track);
+                draw::draw_rounded_rectf(tx, ty, tw, th, th / 2);
+                let knob = th - 6;
+                let kx = tx + 3 + ((tw - knob - 6) as f64 * p).round() as i32;
+                draw::set_draw_color(mix(t.text_dim, t.accent_text, p as f32));
+                draw::draw_pie(kx, ty + 3, knob, knob, 0.0, 360.0);
+            }
+        });
+        let emit = ctx.emitter();
+        {
+            let on = on.clone();
+            b.set_callback(move |_| emit(on_toggle(!on.get())));
+        }
+        let w = b.clone();
+        let first = Cell::new(true);
+        ctx.bind(move |s| {
+            let v = value(s);
+            if on.get() == v && !first.get() {
+                return;
+            }
+            on.set(v);
+            let to = if v { 1.0 } else { 0.0 };
+            if first.replace(false) || !w.visible_r() {
+                // Initial state: no animation.
+                pos.set(to);
+                let mut w = w.clone();
+                w.redraw();
+                return;
+            }
+            let (from, pos, mut w) = (pos.get(), pos.clone(), w.clone());
+            crate::anim::animate(crate::anim::SHORT, move |k| {
+                pos.set(from + (to - from) * k);
+                w.redraw();
+            });
         });
         b.as_base_widget()
     })

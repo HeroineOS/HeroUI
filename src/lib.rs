@@ -40,6 +40,7 @@
 //! }
 //! ```
 
+pub mod anim;
 mod element;
 pub mod hover;
 mod popup;

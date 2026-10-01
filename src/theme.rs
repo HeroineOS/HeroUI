@@ -38,6 +38,9 @@ pub struct Theme {
     pub font_size: i32,
     /// Font family name, e.g. "Inter" or "sans". Empty = FLTK default.
     pub font: String,
+    /// Animate state changes (toggle knobs etc.). Off = reduced motion,
+    /// also what a battery saver mode should set.
+    pub animations: bool,
 }
 
 impl Default for Theme {
@@ -62,6 +65,7 @@ impl Theme {
             padding: 12,
             font_size: 14,
             font: String::new(),
+            animations: true,
         }
     }
 
@@ -120,6 +124,7 @@ impl Theme {
                 "padding" => set(&mut self.padding, int()),
                 "font_size" => set(&mut self.font_size, int()),
                 "font" => self.font = value.to_string(),
+                "animations" => set(&mut self.animations, parse_bool(value)),
                 _ => {}
             }
         }
@@ -149,6 +154,7 @@ impl Theme {
             let _ = writeln!(s, "{k} = {v}");
         }
         let _ = writeln!(s, "font = {}", self.font);
+        let _ = writeln!(s, "animations = {}", self.animations);
         s
     }
 
@@ -192,6 +198,7 @@ impl Theme {
         app::set_font(self.font());
         app::set_visible_focus(false);
         RADIUS.store(self.radius, Ordering::Relaxed);
+        crate::anim::set_enabled(self.animations);
         app::set_frame_type_cb(ROUNDED, draw_rounded, 0, 0, 0, 0);
     }
 }
@@ -212,6 +219,14 @@ fn draw_rounded(x: i32, y: i32, w: i32, h: i32, c: Color) {
 fn set<T>(slot: &mut T, value: Option<T>) {
     if let Some(v) = value {
         *slot = v;
+    }
+}
+
+fn parse_bool(s: &str) -> Option<bool> {
+    match s {
+        "true" | "on" | "yes" | "1" => Some(true),
+        "false" | "off" | "no" | "0" => Some(false),
+        _ => None,
     }
 }
 

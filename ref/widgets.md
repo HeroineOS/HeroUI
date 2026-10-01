@@ -28,7 +28,10 @@ widget touched only when the value changed).
 Typical heights: row of buttons/inputs 34, toggle 28, list item 30, progress 10, heading row 36.
 
 Helpers for your own widgets: `custom_button(draw)` (cheap clickable base), `repaint(&mut w)`
-(redraw with background), `heroui::hover::is_hovered(&w)`, `mix(a, b, t)` (blend colors).
+(redraw with background), `heroui::hover::is_hovered(&w)`, `mix(a, b, t)` (blend colors),
+`heroui::anim::animate(heroui::anim::SHORT, move |t| { pos.set(..t..); w.redraw() })` for
+transitions: eased t 0→1 over ~150 ms, repaints only that widget while it runs, and jumps
+straight to 1.0 when the theme has `animations = false`. `toggle` uses it for its knob.
 
 Not built in yet (use `Element::new`, see patterns.md and `examples/custom_widget.rs`):
 multi-line text, scroll area, images/icons, menus, tabs, Enter-to-submit on text_input.
