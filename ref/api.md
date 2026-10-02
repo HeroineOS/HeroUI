@@ -53,6 +53,11 @@ bindings run once with the new state.
 `Subscription::every(Duration, msg)`: clones `msg` to `update` every interval, on the UI
 thread (FLTK timeout, no extra thread). `sub.map(Msg::Child)` converts a component's.
 
+`Subscription::worker(|tx: heroui::Sender<Msg>| { .. })`: runs the closure once on its own
+thread (small stack) for the app's life; `tx.send(msg)` queues a message and wakes the loop
+(returns false after quit: return then). For event streams (compositor IPC, sockets,
+inotify): nothing runs while nothing happens. Use `every` for polling.
+
 ## Element<S, M> modifiers
 | Modifier | Meaning |
 |---|---|
