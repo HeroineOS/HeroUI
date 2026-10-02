@@ -153,8 +153,7 @@ fn render(name: &str, size: i32, color: Color, builtin: bool) -> Option<RgbImage
     let scale = fltk::app::screen_scale(0).max(1.0);
     let px = (size as f32 * scale).round() as i32;
     let mut img = if builtin {
-        let svg = SvgImage::from_data(&builtin_svg(name, color)?).ok()?;
-        svg.copy_sized(px, px).to_rgb().ok()?
+        svg_to_rgb(SvgImage::from_data(&builtin_svg(name, color)?).ok()?, px)?
     } else {
         let path = if Path::new(name).is_absolute() { Some(PathBuf::from(name)) } else { find(name) }?;
         load_sized(&path, px)?
@@ -163,12 +162,18 @@ fn render(name: &str, size: i32, color: Color, builtin: bool) -> Option<RgbImage
     Some(img)
 }
 
+/// SVGs rasterize lazily; `normalize` does it now, at `px`.
+fn svg_to_rgb(svg: SvgImage, px: i32) -> Option<RgbImage> {
+    let mut img = svg.copy_sized(px, px);
+    img.normalize();
+    img.to_rgb().ok()
+}
+
 fn load_sized(path: &Path, px: i32) -> Option<RgbImage> {
     fltk::image::Image::set_scaling_algorithm(fltk::image::RgbScaling::Bilinear);
     if path.extension().is_some_and(|e| e == "svg") {
         // Straight from the file, so nothing big is kept around.
-        let svg = SvgImage::load(path).ok()?;
-        return svg.copy_sized(px, px).to_rgb().ok();
+        return svg_to_rgb(SvgImage::load(path).ok()?, px);
     }
     let img = SharedImage::load(path).ok()?;
     if img.w() <= 0 || img.h() <= 0 {

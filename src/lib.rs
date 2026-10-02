@@ -41,6 +41,7 @@
 //! ```
 
 pub mod anim;
+mod color_picker;
 pub mod drag_scroll;
 mod element;
 pub mod hover;

@@ -23,6 +23,7 @@ use fltk::input::Input;
 use fltk::prelude::*;
 use fltk::valuator::HorSlider;
 
+pub use crate::color_picker::color_button;
 use crate::element::{relayout_parent, Ctx, Element};
 use crate::hover::is_hovered;
 use crate::theme::{Theme, ROUNDED};
@@ -827,5 +828,33 @@ pub fn scroll<S: 'static, M: 'static>(children: Vec<Element<S, M>>) -> Element<S
             }
         });
         sc.as_base_widget()
+    })
+}
+
+/// An icon from [`crate::icons`], centered in its space: a built-in line
+/// icon drawn in the theme's text color, a theme (app) icon, or a file.
+/// `name(state)` can change it (battery level, mute state...).
+pub fn icon<S: 'static, M: 'static>(name: impl Fn(&S) -> String + 'static, size: i32) -> Element<S, M> {
+    Element::new(move |ctx| {
+        let cur: Rc<RefCell<String>> = Rc::default();
+        let mut f = Frame::default();
+        f.set_frame(FrameType::NoBox);
+        {
+            let cur = cur.clone();
+            f.draw(move |f| {
+                let t = crate::theme::current();
+                let s = size.min(f.w()).min(f.h());
+                crate::icons::draw(&cur.borrow(), f.x() + (f.w() - s) / 2, f.y() + (f.h() - s) / 2, s, t.text);
+            });
+        }
+        let mut w = f.clone();
+        ctx.bind(move |st| {
+            let n = name(st);
+            if *cur.borrow() != n {
+                *cur.borrow_mut() = n;
+                repaint(&mut w);
+            }
+        });
+        f.as_base_widget()
     })
 }

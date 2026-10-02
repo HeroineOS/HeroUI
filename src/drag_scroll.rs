@@ -29,6 +29,7 @@ thread_local! {
     static SCROLLS: RefCell<Vec<Scroll>> = const { RefCell::new(Vec::new()) };
     static GESTURE: RefCell<Option<Gesture>> = const { RefCell::new(None) };
     static INSTALLED: Cell<bool> = const { Cell::new(false) };
+    static BLOCKED: Cell<bool> = const { Cell::new(false) };
 }
 
 struct Gesture {
@@ -45,6 +46,12 @@ pub(crate) fn register(s: &Scroll) {
         v.retain(|s| !s.was_deleted());
         v.push(s.clone());
     });
+}
+
+/// While set, presses never start a scroll (a popover over the page is
+/// being dragged in).
+pub(crate) fn set_blocked(on: bool) {
+    BLOCKED.with(|b| b.set(on));
 }
 
 /// Installs the hook (once). Called by `run`.
@@ -79,7 +86,8 @@ unsafe extern "C" fn dispatch(event: c_int, window: *mut c_void) -> c_int {
     match event {
         FL_PUSH => {
             let (x, y) = pointer();
-            let g = scroll_under(x, y).map(|s| Gesture { start_pos: s.yposition(), scroll: s, start: (x, y), scrolling: false });
+            let g = if BLOCKED.with(Cell::get) { None } else { scroll_under(x, y) };
+            let g = g.map(|s| Gesture { start_pos: s.yposition(), scroll: s, start: (x, y), scrolling: false });
             GESTURE.with(|gs| *gs.borrow_mut() = g);
             pass()
         }

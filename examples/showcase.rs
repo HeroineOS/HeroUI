@@ -92,6 +92,8 @@ struct Showcase {
     clock: String,
     /// 0.0..=1.0 while a (simulated) download runs.
     download: Option<f64>,
+    /// Picked with the color button (0xRRGGBB).
+    color: u32,
 }
 
 #[derive(Clone)]
@@ -106,6 +108,7 @@ enum Msg {
     Tick,
     StartDownload,
     DownloadStep,
+    Color(heroui::fltk::enums::Color),
 }
 
 impl App for Showcase {
@@ -116,6 +119,10 @@ impl App for Showcase {
             Msg::Counter(m) => self.counter.update(m),
             Msg::Wifi(on) => self.wifi = on,
             Msg::Volume(v) => self.volume = v,
+            Msg::Color(c) => {
+                let (r, g, b) = c.to_rgb();
+                self.color = (r as u32) << 16 | (g as u32) << 8 | b as u32;
+            }
             Msg::Draft(s) => self.draft = s,
             Msg::Add => {
                 if !self.draft.trim().is_empty() {
@@ -167,8 +174,22 @@ impl App for Showcase {
             ])
             .fixed(96),
             card(vec![
-                toggle("Wi-Fi", |s: &Showcase| s.wifi, Msg::Wifi).fixed(28),
                 row(vec![
+                    icon(|s: &Showcase| if s.wifi { "network-wireless" } else { "network-offline" }.into(), 18).fixed(24),
+                    toggle("Wi-Fi", |s: &Showcase| s.wifi, Msg::Wifi),
+                ])
+                .fixed(28),
+                row(vec![
+                    icon(
+                        |s: &Showcase| match s.volume {
+                            v if v < 1.0 => "volume-muted",
+                            v if v < 50.0 => "volume-low",
+                            _ => "volume-high",
+                        }
+                        .into(),
+                        18,
+                    )
+                    .fixed(24),
                     label("Volume").fixed(70),
                     slider(0.0..=100.0, |s: &Showcase| s.volume, Msg::Volume),
                     text(|s: &Showcase| format!("{:.0}%", s.volume)).fixed(44),
@@ -177,6 +198,12 @@ impl App for Showcase {
                 .enabled(|s: &Showcase| s.wifi),
             ])
             .fixed(92),
+            row(vec![
+                label("Pick a color"),
+                text(|s: &Showcase| format!("#{:06x}", s.color)).fixed(80),
+                color_button(|s: &Showcase| heroui::fltk::enums::Color::from_hex(s.color), Msg::Color).fixed(40),
+            ])
+            .fixed(34),
             row(vec![
                 primary_button("Download", Msg::StartDownload)
                     .fixed(110)
@@ -225,6 +252,6 @@ fn download_step() -> Msg {
 }
 
 fn main() {
-    let app = Showcase { volume: 40.0, wifi: true, ..Default::default() };
-    heroui::run(app, Settings::new("HeroUI showcase").size(460, 600).class("heroui-showcase")).unwrap();
+    let app = Showcase { volume: 40.0, wifi: true, color: 0x3ec99a, ..Default::default() };
+    heroui::run(app, Settings::new("HeroUI showcase").size(460, 640).class("heroui-showcase")).unwrap();
 }
