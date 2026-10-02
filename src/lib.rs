@@ -137,6 +137,13 @@ pub struct Settings {
     /// Make the window span the whole reserved edge, whatever the screen
     /// size (set by [`Settings::panel`]).
     pub span: bool,
+    /// See-through where nothing is drawn: the window starts each paint
+    /// cleared instead of filled with the theme background, so widgets
+    /// that paint their own backgrounds float over the desktop (bar
+    /// "islands"). Needs feature `layer-shell` (the fltk-sys fork) and
+    /// Wayland; elsewhere the window stays opaque. Check
+    /// [`is_transparent`] to know which you got.
+    pub transparent: bool,
 }
 
 /// Window types from the EWMH spec. On X11 (and XWayland compositors that
@@ -182,6 +189,7 @@ impl Settings {
             skip_taskbar: false,
             reserve: None,
             span: false,
+            transparent: false,
         }
     }
 
@@ -254,6 +262,11 @@ impl Settings {
         self.skip_taskbar = on;
         self
     }
+    pub fn transparent(mut self, on: bool) -> Self {
+        self.transparent = on;
+        self
+    }
+
     pub fn reserve(mut self, edge: Edge, px: i32) -> Self {
         self.reserve = Some((edge, px));
         self
@@ -382,6 +395,11 @@ pub fn run<A: App>(mut app: A, mut settings: Settings) -> Result<(), fltk::prelu
     if layer {
         wayland::apply_layer(&win, &settings);
     }
+    #[cfg(feature = "layer-shell")]
+    if settings.transparent && on_wayland() {
+        wayland::make_transparent(&mut win);
+        TRANSPARENT.with(|t| t.set(true));
+    }
     let _ = layer;
     win.show();
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -433,6 +451,18 @@ pub fn run<A: App>(mut app: A, mut settings: Settings) -> Result<(), fltk::prelu
         hover::update();
     }
     Ok(())
+}
+
+thread_local! {
+    static TRANSPARENT: Cell<bool> = const { Cell::new(false) };
+}
+
+/// True if the window asked for [`Settings::transparent`] really is
+/// see-through (Wayland with the fltk-sys fork). Otherwise it's filled
+/// with the theme background as usual, and an app may want to draw
+/// differently (e.g. bar islands in a contrasting color).
+pub fn is_transparent() -> bool {
+    TRANSPARENT.with(Cell::get)
 }
 
 /// True when FLTK is running on its Wayland backend (hybrid builds pick

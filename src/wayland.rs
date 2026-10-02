@@ -112,6 +112,28 @@ fn compositor_has_layer_shell() -> bool {
     found
 }
 
+/// Makes `win` see-through where nothing is drawn (before it's shown):
+/// no opaque region, and each full repaint starts by clearing the window
+/// instead of filling it with the background color.
+#[cfg(feature = "layer-shell")]
+pub(crate) fn make_transparent(win: &mut fltk::window::Window) {
+    use fltk::enums::{Damage, FrameType};
+    use fltk::prelude::*;
+    use fltk_sys::window::{Fl_Window, Fl_Window_wl_transparent, Fl_wl_clear_rect};
+
+    unsafe { Fl_Window_wl_transparent(win.as_widget_ptr() as *mut Fl_Window) };
+    win.set_frame(FrameType::NoBox);
+    // Clear first, then FLTK draws the children over it.
+    win.super_draw_first(false);
+    win.draw(|w| {
+        // When only children are redrawn, they repaint themselves; the
+        // rest of the window must stay as it is.
+        if w.damage_type() != Damage::Child {
+            unsafe { Fl_wl_clear_rect(0, 0, w.w(), w.h()) };
+        }
+    });
+}
+
 /// Makes `win` a layer-shell surface according to `s` (before it's shown).
 #[cfg(feature = "layer-shell")]
 pub(crate) fn apply_layer(win: &fltk::window::Window, s: &Settings) {
@@ -126,7 +148,6 @@ pub(crate) fn apply_layer(win: &fltk::window::Window, s: &Settings) {
     const A_LEFT: c_int = 4;
     const A_RIGHT: c_int = 8;
     const KEYBOARD_NONE: c_int = 0;
-    const KEYBOARD_ON_DEMAND: c_int = 2;
 
     let (x, y) = s.position.unwrap_or((0, 0));
     // (layer, anchor, exclusive zone, keyboard, margins top/right/bottom/left)
@@ -139,7 +160,10 @@ pub(crate) fn apply_layer(win: &fltk::window::Window, s: &Settings) {
                 crate::Edge::Left => A_LEFT | A_TOP | A_BOTTOM,
                 crate::Edge::Right => A_RIGHT | A_TOP | A_BOTTOM,
             };
-            (TOP, anchor, px, KEYBOARD_ON_DEMAND, (0, 0, 0, 0))
+            // Panels are clicked, not typed into: taking the keyboard on a
+            // click would pull focus away from the window a taskbar click
+            // just activated.
+            (TOP, anchor, px, KEYBOARD_NONE, (0, 0, 0, 0))
         }
         // Positioned like on X11, from the screen's top-left corner,
         // ignoring space reserved by panels (-1).
