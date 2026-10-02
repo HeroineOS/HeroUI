@@ -64,6 +64,9 @@ pub struct Theme {
     /// Animate state changes (toggle knobs etc.). Off = reduced motion,
     /// also what a battery saver mode should set.
     pub animations: bool,
+    /// Freedesktop icon theme for app icons, e.g. "Papirus". Empty = GTK's
+    /// setting, then hicolor/Adwaita.
+    pub icon_theme: String,
 }
 
 impl Default for Theme {
@@ -90,6 +93,7 @@ impl Theme {
             font_size: 14,
             font: String::new(),
             animations: true,
+            icon_theme: String::new(),
         }
     }
 
@@ -185,6 +189,7 @@ impl Theme {
                 "padding" => set(&mut self.padding, int()),
                 "font_size" => set(&mut self.font_size, int()),
                 "font" => self.font = value.to_string(),
+                "icon_theme" => self.icon_theme = value.to_string(),
                 "mode" => {
                     set(
                         &mut self.mode,
@@ -243,6 +248,9 @@ impl Theme {
         }
         let _ = writeln!(s, "font = {}", self.font);
         let _ = writeln!(s, "animations = {}", self.animations);
+        if !self.icon_theme.is_empty() {
+            let _ = writeln!(s, "icon_theme = {}", self.icon_theme);
+        }
         s
     }
 

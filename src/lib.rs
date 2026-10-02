@@ -44,6 +44,7 @@ pub mod anim;
 pub mod drag_scroll;
 mod element;
 pub mod hover;
+pub mod icons;
 mod popup;
 mod task;
 pub mod theme;
@@ -64,7 +65,7 @@ use fltk::window::Window;
 
 pub use element::{embed, relayout_parent, Binding, Ctx, Element};
 pub use fltk;
-pub use task::{Subscription, Task};
+pub use task::{Sender, Subscription, Task};
 pub use theme::Theme;
 
 pub mod prelude {
@@ -357,6 +358,18 @@ pub fn run<A: App>(mut app: A, mut settings: Settings) -> Result<(), fltk::prelu
                     emit(msg.clone());
                     fltk::app::repeat_timeout3(interval.as_secs_f64(), handle);
                 });
+            }
+            Subscription::Worker(work) => {
+                let tx = tx.clone();
+                let sender = task::Sender::new(move |m| {
+                    let ok = tx.send(m).is_ok();
+                    fltk::app::awake();
+                    ok
+                });
+                let _ = std::thread::Builder::new()
+                    .name("heroui-worker".into())
+                    .stack_size(task::WORKER_STACK)
+                    .spawn(move || work(sender));
             }
         }
     }

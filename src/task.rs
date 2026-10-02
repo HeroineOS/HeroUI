@@ -91,6 +91,25 @@ impl<M> Default for Task<M> {
 pub enum Subscription<M> {
     /// Sends a clone of the message every `Duration`, on the UI thread.
     Every(Duration, M),
+    /// A function run once on its own thread, sending messages whenever it
+    /// likes (an event stream, a socket, a blocking read).
+    Worker(Box<dyn FnOnce(Sender<M>) + Send>),
+}
+
+/// Sends messages from a [`Subscription::worker`] thread to `update`,
+/// waking the event loop.
+pub struct Sender<M>(Box<dyn Fn(M) -> bool + Send>);
+
+impl<M> Sender<M> {
+    pub(crate) fn new(f: impl Fn(M) -> bool + Send + 'static) -> Self {
+        Self(Box::new(f))
+    }
+
+    /// Queues `msg` for `update`. False once the app has quit: return
+    /// from the worker then.
+    pub fn send(&self, msg: M) -> bool {
+        (self.0)(msg)
+    }
 }
 
 impl<M> Subscription<M> {
@@ -98,13 +117,30 @@ impl<M> Subscription<M> {
         Self::Every(interval, msg)
     }
 
+    /// Runs `work` on a dedicated thread (a small stack plus what it
+    /// allocates) for as long as it keeps running. Prefer [`every`](Self::every)
+    /// for polling; use this when something tells you about changes (a
+    /// compositor event stream, inotify, D-Bus signals), so nothing is
+    /// done while nothing happens.
+    pub fn worker(work: impl FnOnce(Sender<M>) + Send + 'static) -> Self {
+        Self::Worker(Box::new(work))
+    }
+}
+
+impl<M: Send + 'static> Subscription<M> {
     /// Converts a component's subscription into its parent's.
-    pub fn map<N>(self, f: impl Fn(M) -> N) -> Subscription<N> {
+    pub fn map<N: Send + 'static>(self, f: impl Fn(M) -> N + Send + Sync + 'static) -> Subscription<N> {
         match self {
             Self::Every(interval, msg) => Subscription::Every(interval, f(msg)),
+            Self::Worker(work) => Subscription::Worker(Box::new(move |out: Sender<N>| {
+                work(Sender::new(move |m| out.send(f(m))))
+            })),
         }
     }
 }
+
+/// Stack for worker threads (address space; only touched pages cost RAM).
+pub(crate) const WORKER_STACK: usize = 256 * 1024;
 
 #[cfg(test)]
 mod tests {
@@ -145,8 +181,19 @@ mod tests {
 
     #[test]
     fn subscription_map() {
-        let Subscription::Every(d, m) = Subscription::every(Duration::from_secs(1), Child::A(3)).map(Parent::Child);
+        let Subscription::Every(d, m) = Subscription::every(Duration::from_secs(1), Child::A(3)).map(Parent::Child) else {
+            panic!()
+        };
         assert_eq!((d, m), (Duration::from_secs(1), Parent::Child(Child::A(3))));
+        let Subscription::Worker(work) = Subscription::worker(|tx: Sender<Child>| {
+            tx.send(Child::A(4));
+        })
+        .map(Parent::Child) else {
+            panic!()
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        work(Sender::new(move |m| tx.send(m).is_ok()));
+        assert_eq!(rx.recv().unwrap(), Parent::Child(Child::A(4)));
     }
 }
 
