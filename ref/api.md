@@ -25,7 +25,15 @@ bottom layer at `position` from the screen's top-left; Notification = top layer 
 a normal window. `above/below/sticky/skip_taskbar` have no Wayland meaning (layers cover
 it). Wayland apps can't position regular windows; `position` is ignored there.
 `heroui::on_wayland()` tells which backend runs. Window class (= Wayland app_id) defaults
-to the executable name.
+to the executable name. Docks never take keyboard focus (a click on a taskbar must not
+pull focus from the window it activates).
+
+`.transparent(true)`: the window is see-through where nothing is drawn; each full repaint
+starts cleared instead of filled with the theme background, so widgets that paint their own
+backgrounds float over the desktop (bar islands). Anti-aliased edges blend. Needs feature
+`layer-shell` (fltk-sys fork) and Wayland; otherwise the window stays opaque.
+`heroui::is_transparent()` says which you got (e.g. draw islands in a contrasting color
+when it's false).
 
 Features: `wayland` (default; hybrid Wayland/X11), `layer-shell`, `tokio`.
 
