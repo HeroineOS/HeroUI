@@ -26,6 +26,7 @@ widget touched only when the value changed).
 | `scroll(vec![..])` | vertically scrolling column (settings pages); children need `.fixed`, `.fixed_with` or a natural height (`list`); wheel + thin themed scrollbar |
 | `color_button(\|s\| Color, \|Color\| M)` | swatch; click opens a picker popover (saturation/brightness square, hue strip, hex field for pasting, Done). Sends while dragging, so preview live and debounce saving. Closes on Done, Enter, Escape, a tap outside, or a window resize. Drawn inside the app window (overlay group created on open, deleted on close): no extra surface, same on Wayland/X11 |
 | `popover(anchor, \|s\| bool, close_msg, \|s\| (w, h), content)` | `content` drops down under `anchor` (above it at the bottom of the screen) while `open(state)`; `close_msg` is sent when the user closes it (click outside, Escape). Size follows `size(state)` while open. Content is built once with the view (hidden window: no surface). Wayland + fork: a real xdg_popup with a grab (also from layer-shell panels; open it on a button *press*: use `press_button`, act when `b.value()`); X11: override window + pointer grab |
+| `popover_at(anchor, \|s\| Option<(x,y,w,h)>, ...)` | same, dropping down from part of the anchor (one button of a widget that draws several), rect relative to the anchor |
 | `press_button(draw)` | `custom_button` whose callback also fires on press (for opening popovers) |
 | `icon(\|s\| String, size)` | icon centered in its space: built-in line icon in the theme text color, freedesktop theme icon (app icons, `Icon=` names), or an image path. Give it `.fixed(size + 6)` in a row |
 | `list(\|s\| usize, \|i\| Element)` | column rebuilt when count changes; items should be `.fixed` |
@@ -34,7 +35,11 @@ widget touched only when the value changed).
 Typical heights: row of buttons/inputs 34, toggle 28, list item 30, progress 10, heading row 36.
 
 Helpers for your own widgets: `custom_button(draw)` (cheap clickable base), `repaint(&mut w)`
-(redraw with background), `heroui::hover::is_hovered(&w)`, `mix(a, b, t)` (blend colors),
+(redraw with background), `heroui::hover::is_hovered(&w)`, `heroui::hover::hover_amount(&w)`
+(0..1, fades in/out ~120 ms: blend the hover color by it, e.g. `mix(bg, hover_bg, a)`),
+`heroui::popup::context_menu(&["Pin", "-Close"])` (right-click menu at the mouse, blocks,
+`Some(index)`; "-" = line above; call it from the click's handler, with no RefCell borrowed:
+it runs FLTK's menu loop), `mix(a, b, t)` (blend colors),
 `heroui::anim::animate(heroui::anim::SHORT, move |t| { pos.set(..t..); w.redraw() })` for
 transitions: eased t 0→1 over ~150 ms, repaints only that widget while it runs, and jumps
 straight to 1.0 when the theme has `animations = false`. `toggle` uses it for its knob. For a value that keeps changing, `heroui::anim::Tween`:
@@ -49,6 +54,10 @@ search, settings, terminal, volume-high/-low/-muted, network-wireless-<0..100> (
 check, refresh, microphone(-muted), bluetooth(-connected/-off), arrow-up/-down. Each (name, size, color) is rasterized
 once and kept at drawn size (~2 KB for 24 px); theme lookups are cached, misses too.
 `heroui::icons::find(name)` = the file path; `exists(name)`.
+
+Tooltips: plain FLTK, themed by HeroUI (colors, font, 0.5 s delay): `w.set_tooltip(&text)` in
+a binding when the text changes; for areas of one widget, `fltk::misc::Tooltip::enter_area`
+(needs `&'static CStr`: intern the texts). Shown as popups on Wayland too (layer surfaces).
 
 Not built in yet (use `Element::new`, see patterns.md and `examples/custom_widget.rs`):
 multi-line text, menus, tabs, general popovers (a dropdown panel with arbitrary content,

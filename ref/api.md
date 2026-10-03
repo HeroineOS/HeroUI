@@ -55,6 +55,7 @@ bindings run once with the new state.
 | `Task::quit()` | close window, `run` returns |
 | `Task::batch([t1, t2])` | several at once |
 | `Task::future(async move { .. })` | feature `tokio` only: shared current-thread runtime |
+| `Task::rebuild()` | builds the view again from `App::view` after this update (old widgets deleted, popovers of deleted anchors too); for a different set of widgets (config changes). Subscriptions stay |
 | `task.map(Msg::Child)` | component task → parent task (wraps messages and background results) |
 
 ## Subscription
