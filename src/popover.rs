@@ -37,6 +37,20 @@ pub fn popover<S: 'static, M: Clone + 'static>(
     size: impl Fn(&S) -> (i32, i32) + 'static,
     content: Element<S, M>,
 ) -> Element<S, M> {
+    popover_at(anchor, |_: &S| None, open, on_close, size, content)
+}
+
+/// Like [`popover`], but it drops down from part of the anchor:
+/// `rect(state)` is (x, y, w, h) relative to the anchor widget (e.g. one
+/// button of a widget that draws several), None for the whole anchor.
+pub fn popover_at<S: 'static, M: Clone + 'static>(
+    anchor: Element<S, M>,
+    rect: impl Fn(&S) -> Option<(i32, i32, i32, i32)> + 'static,
+    open: impl Fn(&S) -> bool + 'static,
+    on_close: M,
+    size: impl Fn(&S) -> (i32, i32) + 'static,
+    content: Element<S, M>,
+) -> Element<S, M> {
     Element::new(move |ctx| {
         let anchor = anchor.build(ctx);
 
@@ -146,7 +160,11 @@ pub fn popover<S: 'static, M: Clone + 'static>(
             win.set_size(w.max(1), h.max(1));
             let Some(parent) = anchor.window() else { return };
             wanted.set(true);
-            show_at(&mut win, &*parent, &anchor);
+            let r = match rect(s) {
+                Some((x, y, w, h)) => (anchor.x() + x, anchor.y() + y, w, h),
+                None => (anchor.x(), anchor.y(), anchor.w(), anchor.h()),
+            };
+            show_at(&mut win, &*parent, r);
         });
         result
     })
@@ -186,8 +204,7 @@ fn round_corners(win: &mut Window) -> bool {
     false
 }
 
-fn show_at(win: &mut Window, parent: &dyn WindowExt, anchor: &fltk::widget::Widget) {
-    let (ax, ay, aw, ah) = (anchor.x(), anchor.y(), anchor.w(), anchor.h());
+fn show_at(win: &mut Window, parent: &dyn WindowExt, (ax, ay, aw, ah): (i32, i32, i32, i32)) {
     if crate::on_wayland() {
         #[cfg(feature = "layer-shell")]
         unsafe {
