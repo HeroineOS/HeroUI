@@ -19,19 +19,30 @@ use fltk::enums::Color;
 use fltk::image::{RgbImage, SharedImage, SvgImage};
 use fltk::prelude::*;
 
-/// Names of the built-in icons. `battery-<0..100>` (rounded to 10) and
-/// `battery-<n>-charging` are built from the level.
+/// Names of the built-in icons. `battery-<0..100>` (rounded to 10),
+/// `battery-<n>-charging` and `network-wireless-<0..100>` (signal, in 4
+/// steps) are built from the level.
 pub const BUILTIN: &[&str] = &[
     "apps",
     "app",
+    "arrow-down",
+    "arrow-up",
     "battery",
+    "bluetooth",
+    "bluetooth-connected",
+    "bluetooth-off",
+    "check",
     "clock",
     "cpu",
+    "lock",
     "memory",
+    "microphone",
+    "microphone-muted",
     "network-wired",
     "network-wireless",
     "network-offline",
     "power",
+    "refresh",
     "search",
     "settings",
     "terminal",
@@ -51,11 +62,26 @@ fn builtin_body(name: &str) -> Option<String> {
         let level = level.strip_prefix('-').map_or(Some(100), |l| l.parse::<u32>().ok())?;
         return Some(battery(level.min(100), charging));
     }
+    if let Some(level) = name.strip_prefix("network-wireless-") {
+        return Some(wifi(level.parse::<u32>().ok()?.min(100)));
+    }
     let wifi = r#"<path d="M9.2 16.2A4 4 0 0 1 14.8 16.2M6.3 13.3A8 8 0 0 1 17.7 13.3M3.5 10.5A12 12 0 0 1 20.5 10.5"/><circle cx="12" cy="19.5" r="1.2" fill="C" stroke="none"/>"#;
+    let rune = r#"<path d="M7 7.5l10 9-5 4.5V3l5 4.5-10 9"/>"#;
+    let mic = r#"<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>"#;
     let speaker = r#"<path d="M11 5L6.5 9H3v6h3.5L11 19z"/>"#;
     Some(match name {
         "apps" => r#"<rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/>"#.into(),
         "app" => r#"<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M3 9h18"/>"#.into(),
+        "arrow-down" => r#"<path d="M12 4v15M6 13l6 6 6-6"/>"#.into(),
+        "arrow-up" => r#"<path d="M12 20V5M6 11l6-6 6 6"/>"#.into(),
+        "bluetooth" => rune.into(),
+        "bluetooth-connected" => format!(r#"{rune}<circle cx="3.5" cy="12" r="1.3" fill="C" stroke="none"/><circle cx="20.5" cy="12" r="1.3" fill="C" stroke="none"/>"#),
+        "bluetooth-off" => format!(r#"<g opacity="0.45">{rune}</g><path d="M4 4l16 16"/>"#),
+        "check" => r#"<path d="M5 12.5l4.5 4.5L19 7"/>"#.into(),
+        "lock" => r#"<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/>"#.into(),
+        "microphone" => mic.into(),
+        "microphone-muted" => format!(r#"{mic}<path d="M4 4l16 16"/>"#),
+        "refresh" => r#"<path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/>"#.into(),
         "clock" => r#"<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>"#.into(),
         "cpu" => r#"<rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9.5" y="9.5" width="5" height="5" rx="1" fill="C" stroke="none"/><path d="M9.5 2.5v3M14.5 2.5v3M9.5 18.5v3M14.5 18.5v3M2.5 9.5h3M2.5 14.5h3M18.5 9.5h3M18.5 14.5h3"/>"#.into(),
         "memory" => r#"<rect x="2.5" y="7" width="19" height="9" rx="1.5"/><path d="M6.5 10v3M10.5 10v3M13.5 10v3M17.5 10v3M6 16v3M10 16v3M14 16v3M18 16v3"/>"#.into(),
@@ -71,6 +97,23 @@ fn builtin_body(name: &str) -> Option<String> {
         "volume-muted" => format!(r#"{speaker}<path d="M15.5 9.5l5 5M20.5 9.5l-5 5"/>"#),
         _ => return None,
     })
+}
+
+/// Wi-Fi with 0-3 of its arcs lit for the signal (the rest faint).
+fn wifi(level: u32) -> String {
+    let lit = match level {
+        75.. => 3,
+        50..=74 => 2,
+        25..=49 => 1,
+        _ => 0,
+    };
+    let arcs = ["M9.2 16.2A4 4 0 0 1 14.8 16.2", "M6.3 13.3A8 8 0 0 1 17.7 13.3", "M3.5 10.5A12 12 0 0 1 20.5 10.5"];
+    let mut s = String::from(r#"<circle cx="12" cy="19.5" r="1.2" fill="C" stroke="none"/>"#);
+    for (i, d) in arcs.iter().enumerate() {
+        let faint = if i < lit { "" } else { r#" opacity="0.3""# };
+        s += &format!(r#"<path d="{d}"{faint}/>"#);
+    }
+    s
 }
 
 fn battery(level: u32, charging: bool) -> String {
@@ -306,7 +349,7 @@ mod tests {
 
     #[test]
     fn builtins_are_valid_svg() {
-        for name in BUILTIN.iter().copied().chain(["battery-0", "battery-45-charging", "battery-100"]) {
+        for name in BUILTIN.iter().copied().chain(["battery-0", "battery-45-charging", "battery-100", "network-wireless-0", "network-wireless-80"]) {
             let svg = builtin_svg(name, Color::from_rgb(1, 2, 3)).unwrap_or_else(|| panic!("{name}"));
             assert!(svg.contains("#010203") && !svg.contains("\"C\""), "{name}: {svg}");
         }

@@ -46,6 +46,7 @@ pub mod drag_scroll;
 mod element;
 pub mod hover;
 pub mod icons;
+mod popover;
 mod popup;
 mod task;
 pub mod theme;

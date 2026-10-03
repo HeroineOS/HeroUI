@@ -25,6 +25,8 @@ widget touched only when the value changed).
 | `canvas(\|s\| D, paint)` | custom drawing; `D: PartialEq`, redrawn only when it changes; `paint(&D, x, y, w, h, &Theme)` with `fltk::draw` |
 | `scroll(vec![..])` | vertically scrolling column (settings pages); children need `.fixed`, `.fixed_with` or a natural height (`list`); wheel + thin themed scrollbar |
 | `color_button(\|s\| Color, \|Color\| M)` | swatch; click opens a picker popover (saturation/brightness square, hue strip, hex field for pasting, Done). Sends while dragging, so preview live and debounce saving. Closes on Done, Enter, Escape, a tap outside, or a window resize. Drawn inside the app window (overlay group created on open, deleted on close): no extra surface, same on Wayland/X11 |
+| `popover(anchor, \|s\| bool, close_msg, \|s\| (w, h), content)` | `content` drops down under `anchor` (above it at the bottom of the screen) while `open(state)`; `close_msg` is sent when the user closes it (click outside, Escape). Size follows `size(state)` while open. Content is built once with the view (hidden window: no surface). Wayland + fork: a real xdg_popup with a grab (also from layer-shell panels; open it on a button *press*: use `press_button`, act when `b.value()`); X11: override window + pointer grab |
+| `press_button(draw)` | `custom_button` whose callback also fires on press (for opening popovers) |
 | `icon(\|s\| String, size)` | icon centered in its space: built-in line icon in the theme text color, freedesktop theme icon (app icons, `Icon=` names), or an image path. Give it `.fixed(size + 6)` in a row |
 | `list(\|s\| usize, \|i\| Element)` | column rebuilt when count changes; items should be `.fixed` |
 | `embed(lens, map, child)` | plug in a component (api.md) |
@@ -43,10 +45,11 @@ one continuous motion (what `progress` uses; measured: steady 3-5 px per 30 ms, 
 Icons in custom drawing: `heroui::icons::draw(name, x, y, size, color) -> bool` (false = not
 found, nothing drawn). Built-ins (`heroui::icons::BUILTIN`): apps, app, battery,
 battery-<0..100>[-charging], clock, cpu, memory, network-wired/-wireless/-offline, power,
-search, settings, terminal, volume-high/-low/-muted. Each (name, size, color) is rasterized
+search, settings, terminal, volume-high/-low/-muted, network-wireless-<0..100> (signal), lock,
+check, refresh, microphone(-muted), bluetooth(-connected/-off), arrow-up/-down. Each (name, size, color) is rasterized
 once and kept at drawn size (~2 KB for 24 px); theme lookups are cached, misses too.
 `heroui::icons::find(name)` = the file path; `exists(name)`.
 
 Not built in yet (use `Element::new`, see patterns.md and `examples/custom_widget.rs`):
 multi-line text, menus, tabs, general popovers (a dropdown panel with arbitrary content,
-e.g. a volume slider in a bar; `color_picker.rs` shows the in-window overlay technique).
+beyond `popover`; `color_picker.rs` shows the in-window overlay technique).
