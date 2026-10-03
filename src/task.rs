@@ -11,6 +11,7 @@ pub(crate) enum Action<M> {
     Thread(Box<dyn FnOnce() -> M + Send>),
     Message(M),
     Quit,
+    Rebuild,
     #[cfg(feature = "tokio")]
     Future(std::pin::Pin<Box<dyn std::future::Future<Output = M> + Send>>),
 }
@@ -41,6 +42,15 @@ impl<M> Task<M> {
         Self(vec![Action::Quit])
     }
 
+    /// Builds the view again from `App::view` (after this update), for
+    /// changes the bindings can't express: a different set of widgets
+    /// (modules added or removed after a config change). The old widgets
+    /// are deleted; the new ones get the current state right away.
+    /// Subscriptions stay as they are.
+    pub fn rebuild() -> Self {
+        Self(vec![Action::Rebuild])
+    }
+
     pub fn batch(tasks: impl IntoIterator<Item = Task<M>>) -> Self {
         Self(tasks.into_iter().flat_map(|t| t.0).collect())
     }
@@ -66,6 +76,7 @@ impl<M: Send + 'static> Task<M> {
                 .map(|action| match action {
                     Action::Message(m) => Action::Message(f(m)),
                     Action::Quit => Action::Quit,
+                    Action::Rebuild => Action::Rebuild,
                     Action::Thread(work) => {
                         let f = f.clone();
                         Action::Thread(Box::new(move || f(work())))
@@ -168,7 +179,7 @@ mod tests {
             match action {
                 Action::Message(m) => out.push(Some(m)),
                 Action::Thread(work) => out.push(Some(work())),
-                Action::Quit => out.push(None),
+                Action::Quit | Action::Rebuild => out.push(None),
                 #[cfg(feature = "tokio")]
                 Action::Future(_) => unreachable!(),
             }

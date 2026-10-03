@@ -15,6 +15,8 @@ use fltk::prelude::*;
 use fltk::widget::Widget;
 
 thread_local! {
+    /// Widgets fading in or out of their hover look: (widget pointer, 0..1).
+    static FADES: RefCell<Vec<(usize, crate::anim::Tween)>> = const { RefCell::new(Vec::new()) };
     static HOVERED: Cell<usize> = const { Cell::new(0) };
     static CURRENT: RefCell<Option<(Widget, bool)>> = const { RefCell::new(None) };
 }
@@ -23,6 +25,39 @@ thread_local! {
 /// widget is redrawn automatically when this changes.
 pub fn is_hovered<W: WidgetExt>(w: &W) -> bool {
     HOVERED.with(|h| h.get() == w.as_widget_ptr() as usize)
+}
+
+/// How hovered `w` looks, 0.0 to 1.0: like [`is_hovered`], but it fades
+/// in and out over ~120 ms (instantly with animations off). Draw code
+/// blends the hover color by it.
+pub fn hover_amount<W: WidgetExt>(w: &W) -> f32 {
+    let ptr = w.as_widget_ptr() as usize;
+    let fading = FADES.with(|f| f.borrow().iter().find(|(p, _)| *p == ptr).map(|(_, t)| t.get() as f32));
+    fading.unwrap_or(if is_hovered(w) { 1.0 } else { 0.0 })
+}
+
+/// Fades widget `w` toward hovered (1) or not (0).
+fn fade(w: &Widget, to: f64) {
+    let ptr = w.as_widget_ptr() as usize;
+    let tween = FADES.with(|f| {
+        let mut f = f.borrow_mut();
+        // Finished fade-outs are done with.
+        f.retain(|(p, t)| *p == ptr || t.get() > 0.0);
+        match f.iter().find(|(p, _)| *p == ptr) {
+            Some((_, t)) => t.clone(),
+            None => {
+                let t = crate::anim::Tween::new(1.0 - to);
+                f.push((ptr, t.clone()));
+                t
+            }
+        }
+    });
+    let mut w = w.clone();
+    tween.animate_to(to, std::time::Duration::from_millis(120), move || {
+        if !w.was_deleted() {
+            crate::widgets::repaint(&mut w);
+        }
+    });
 }
 
 /// Called by `run` after every event batch: one FFI call when nothing
@@ -53,12 +88,12 @@ pub(crate) fn update() {
         // Only clickable widgets draw a hover state.
         // Only clickable widgets draw a hover state. `repaint`, not
         // `redraw`: a hover effect may cover more than the normal look.
-        if let Some((mut w, true)) = old {
-            crate::widgets::repaint(&mut w);
+        if let Some((w, true)) = old {
+            fade(&w, 0.0);
         }
-        *cur = new.map(|mut w| {
+        *cur = new.map(|w| {
             if clickable {
-                crate::widgets::repaint(&mut w);
+                fade(&w, 1.0);
             }
             (w, clickable)
         });

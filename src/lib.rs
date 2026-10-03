@@ -47,7 +47,7 @@ mod element;
 pub mod hover;
 pub mod icons;
 mod popover;
-mod popup;
+pub mod popup;
 mod task;
 pub mod theme;
 mod watch;
@@ -407,8 +407,9 @@ pub fn run<A: App>(mut app: A, mut settings: Settings) -> Result<(), fltk::prelu
     if !on_wayland() && x11::needed(&settings) {
         x11::apply(&win, &settings);
     }
+    let rebuild = Rc::new(Cell::new(false));
     let init = app.init();
-    if !run_task(init, &queue, &tx) {
+    if !run_task(init, &queue, &tx, &rebuild) {
         return Ok(());
     }
     // Messages it queued are handled on the first loop pass.
@@ -439,10 +440,26 @@ pub fn run<A: App>(mut app: A, mut settings: Settings) -> Result<(), fltk::prelu
             let Some(msg) = next else { break };
             changed = true;
             let task = app.update(msg);
-            if !run_task(task, &queue, &tx) {
+            if !run_task(task, &queue, &tx, &rebuild) {
                 fl.quit();
                 return Ok(());
             }
+        }
+        if rebuild.take() {
+            // A new view in place of the old one, same window.
+            popover::forget_deleted();
+            win.remove(&root);
+            fltk::app::delete_widget(root.clone());
+            win.begin();
+            let mut ctx = Ctx::new(emit.clone(), theme::current());
+            root = app.view().build(&mut ctx);
+            win.end();
+            bindings = ctx.into_bindings();
+            root.resize(0, 0, win.w(), win.h());
+            win.resizable(&root);
+            changed = true;
+            popover::forget_deleted();
+            win.redraw();
         }
         if changed {
             for b in bindings.iter_mut() {
@@ -477,12 +494,14 @@ fn run_task<M: Send + 'static>(
     task: Task<M>,
     queue: &Rc<RefCell<VecDeque<M>>>,
     tx: &mpsc::Sender<M>,
+    rebuild: &Cell<bool>,
 ) -> bool {
     use task::Action;
     for action in task.0 {
         match action {
             Action::Message(m) => queue.borrow_mut().push_back(m),
             Action::Quit => return false,
+            Action::Rebuild => rebuild.set(true),
             Action::Thread(work) => {
                 let tx = tx.clone();
                 std::thread::spawn(move || {

@@ -19,7 +19,7 @@ use fltk::input::Input;
 use fltk::prelude::*;
 
 use crate::element::Element;
-use crate::hover::is_hovered;
+use crate::hover::{hover_amount, is_hovered};
 use crate::theme::ROUNDED;
 use crate::widgets::{custom_button, mix, repaint};
 
@@ -144,10 +144,8 @@ fn open(anchor: &Button, start: Color, on_pick: Rc<dyn Fn(Color)>) {
         let t = crate::theme::current();
         let bg = if b.value() {
             mix(t.accent, t.background, 0.25)
-        } else if is_hovered(b) {
-            mix(t.accent, Color::White, 0.1)
         } else {
-            t.accent
+            mix(t.accent, Color::White, 0.1 * hover_amount(b))
         };
         draw::set_draw_color(bg);
         draw::draw_rounded_rectf(b.x(), b.y(), b.w(), b.h(), t.radius.min(b.h() / 2));

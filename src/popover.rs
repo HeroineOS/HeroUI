@@ -50,26 +50,44 @@ pub fn popover<S: 'static, M: Clone + 'static>(
         let mut style = {
             let mut win = win.clone();
             move |t: &crate::Theme| {
-                win.set_color(t.surface);
+                // Like a small window of the app: its background, a border.
+                win.set_color(t.background);
                 win.redraw();
             }
         };
         style(ctx.theme());
         crate::theme::on_change(&win, style);
-        win.set_frame(FrameType::FlatBox);
         let mut root = content.build(ctx);
         root.resize(0, 0, win.w(), win.h());
         win.resizable(&root);
         win.end();
-        // A thin border over the content.
-        win.draw(|w| {
+        // Rounded like the theme where the window can be see-through
+        // (Wayland with the fork), square elsewhere. The panel is painted
+        // first, the content over it.
+        let round = round_corners(&mut win);
+        win.set_frame(if round { FrameType::NoBox } else { FrameType::FlatBox });
+        win.super_draw_first(!round);
+        win.draw(move |w| {
             let t = crate::theme::current();
-            fltk::draw::set_draw_color(t.border);
-            fltk::draw::draw_rect(0, 0, w.w(), w.h());
+            if round {
+                let r = t.radius.min(16);
+                #[cfg(feature = "layer-shell")]
+                unsafe {
+                    fltk_sys::window::Fl_wl_clear_rect(0, 0, w.w(), w.h())
+                };
+                fltk::draw::set_draw_color(t.border);
+                fltk::draw::draw_rounded_rectf(0, 0, w.w(), w.h(), r);
+                fltk::draw::set_draw_color(t.background);
+                fltk::draw::draw_rounded_rectf(1, 1, w.w() - 2, w.h() - 2, (r - 1).max(0));
+            } else {
+                fltk::draw::set_draw_color(t.border);
+                fltk::draw::draw_rect(0, 0, w.w(), w.h());
+            }
         });
         if let Some(g) = outer {
             Group::set_current(Some(&g));
         }
+        REGISTRY.with(|r| r.borrow_mut().push((anchor.clone(), win.clone())));
 
         // True while the app wants it open; a hide we didn't ask for
         // (outside click, Escape) sends `on_close`.
@@ -132,6 +150,40 @@ pub fn popover<S: 'static, M: Clone + 'static>(
         });
         result
     })
+}
+
+thread_local! {
+    /// Popovers and their anchors, to delete a popover with its anchor.
+    static REGISTRY: std::cell::RefCell<Vec<(fltk::widget::Widget, Window)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Deletes the popovers whose anchor is gone (after a rebuild).
+pub(crate) fn forget_deleted() {
+    REGISTRY.with(|r| {
+        r.borrow_mut().retain(|(anchor, win)| {
+            if anchor.was_deleted() {
+                if !win.was_deleted() {
+                    let mut w = win.clone();
+                    w.hide();
+                    fltk::app::delete_widget(w);
+                }
+                false
+            } else {
+                true
+            }
+        })
+    });
+}
+
+/// Makes `win` see-through outside its rounded panel, where possible.
+fn round_corners(win: &mut Window) -> bool {
+    #[cfg(feature = "layer-shell")]
+    if crate::on_wayland() {
+        unsafe { fltk_sys::window::Fl_Window_wl_transparent(win.as_widget_ptr() as *mut _) };
+        return true;
+    }
+    let _ = win;
+    false
 }
 
 fn show_at(win: &mut Window, parent: &dyn WindowExt, anchor: &fltk::widget::Widget) {

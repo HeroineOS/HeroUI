@@ -26,7 +26,7 @@ use fltk::valuator::HorSlider;
 pub use crate::color_picker::color_button;
 pub use crate::popover::{popover, press_button};
 use crate::element::{relayout_parent, Ctx, Element};
-use crate::hover::is_hovered;
+use crate::hover::hover_amount;
 use crate::theme::{Theme, ROUNDED};
 
 fn text_frame<S: 'static, M: 'static>(ctx: &Ctx<S, M>, size_delta: i32, dim: bool, bold: bool) -> Frame {
@@ -229,7 +229,8 @@ pub fn mix(a: Color, b: Color, t: f32) -> Color {
 /// callback; [`crate::hover`] redraws it on enter/leave. This is the cheap
 /// way to make any clickable custom widget: set a callback, don't add a
 /// `handle` closure. In `draw`, use `b.value()` (pressed),
-/// [`is_hovered`](crate::hover::is_hovered) and `b.active_r()`.
+/// [`is_hovered`](crate::hover::is_hovered) (or the fading
+/// [`hover_amount`](crate::hover::hover_amount)) and `b.active_r()`.
 pub fn custom_button(draw: impl FnMut(&mut Button) + 'static) -> Button {
     let mut b = Button::default();
     b.set_frame(FrameType::NoBox);
@@ -253,10 +254,8 @@ fn make_button<S: 'static, M: Clone + 'static>(
                 mix(bg, t.background, 0.6)
             } else if b.value() {
                 mix(bg, t.background, 0.25)
-            } else if is_hovered(b) {
-                mix(bg, Color::White, 0.1)
             } else {
-                bg
+                mix(bg, Color::White, 0.1 * hover_amount(b))
             };
             let fg = if b.active_r() { fg } else { mix(fg, t.background, 0.5) };
             draw::set_draw_color(bg);
@@ -333,7 +332,7 @@ pub fn toggle<S: 'static, M: 'static>(
                 let (tw, th) = (40, 22);
                 let (tx, ty) = (b.x() + b.w() - tw, b.y() + (b.h() - th) / 2);
                 let track = mix(t.surface_alt, t.accent, p as f32);
-                let track = if is_hovered(b) { mix(track, Color::White, 0.1) } else { track };
+                let track = mix(track, Color::White, 0.1 * hover_amount(b));
                 let track = if b.active_r() { track } else { mix(track, t.background, 0.6) };
                 draw::set_draw_color(track);
                 draw::draw_rounded_rectf(tx, ty, tw, th, th / 2);
@@ -383,7 +382,7 @@ pub fn checkbox<S: 'static, M: 'static>(
             let s = 18;
             let (x, y) = (b.x(), b.y() + (b.h() - s) / 2);
             let bg = if on { t.accent } else { t.surface_alt };
-            let bg = if is_hovered(b) { mix(bg, Color::White, 0.1) } else { bg };
+            let bg = mix(bg, Color::White, 0.1 * hover_amount(b));
             let bg = if b.active_r() { bg } else { mix(bg, t.background, 0.6) };
             draw::set_draw_color(bg);
             draw::draw_rounded_rectf(x, y, s, s, (t.radius / 2).min(5));
@@ -420,7 +419,7 @@ pub fn dropdown<S: 'static, M: 'static, T: AsRef<str> + 'static>(
             let (opts, sel) = (opts.clone(), sel.clone());
             move |b| {
                 let t = crate::theme::current();
-                let bg = if is_hovered(b) || b.value() { mix(t.surface_alt, Color::White, 0.1) } else { t.surface_alt };
+                let bg = mix(t.surface_alt, Color::White, if b.value() { 0.1 } else { 0.1 * hover_amount(b) });
                 let bg = if b.active_r() { bg } else { mix(bg, t.background, 0.6) };
                 draw::set_draw_color(bg);
                 draw::draw_rounded_rectf(b.x(), b.y(), b.w(), b.h(), t.radius.min(b.h() / 2));

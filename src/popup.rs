@@ -22,6 +22,20 @@ thread_local! {
 /// picks one (returns its index) or dismisses it (`None`). `selected` is
 /// drawn in the accent color.
 pub(crate) fn pick<W: WidgetExt>(anchor: &W, items: &[String], selected: Option<usize>, t: &Theme) -> Option<usize> {
+    pick_at((anchor.x(), anchor.y(), anchor.w(), anchor.h()), items, selected, t)
+}
+
+/// A context menu at the mouse (call it while handling the click that
+/// opens it): blocks until the user picks an item (its index) or
+/// dismisses the menu. Items starting with "-" are separators before the
+/// item (the "-" isn't shown).
+pub fn context_menu(items: &[&str]) -> Option<usize> {
+    let (x, y) = (fltk::app::event_x(), fltk::app::event_y());
+    let items: Vec<String> = items.iter().map(|s| s.to_string()).collect();
+    pick_at((x, y, 1, 1), &items, None, &crate::theme::current())
+}
+
+fn pick_at(anchor: (i32, i32, i32, i32), items: &[String], selected: Option<usize>, t: &Theme) -> Option<usize> {
     if items.is_empty() {
         return None;
     }
@@ -44,8 +58,12 @@ pub(crate) fn pick<W: WidgetExt>(anchor: &W, items: &[String], selected: Option<
         menu.set_text_font(t.font());
         menu.set_text_size(t.font_size);
         menu.set_text_color(t.text);
+        // A divider goes under the item before a "-" item.
         for (i, item) in items.iter().enumerate() {
-            let idx = menu.add(&escape(item), fltk::enums::Shortcut::None, MenuFlag::Normal, |_| {});
+            let next_divider = items.get(i + 1).is_some_and(|n| n.starts_with('-'));
+            let flag = if next_divider { MenuFlag::MenuDivider } else { MenuFlag::Normal };
+            let label = item.strip_prefix('-').unwrap_or(item);
+            let idx = menu.add(&escape(label), fltk::enums::Shortcut::None, flag, |_| {});
             if Some(i) == selected {
                 if let Some(mut it) = menu.at(idx) {
                     it.set_label_color(t.accent);
@@ -56,7 +74,7 @@ pub(crate) fn pick<W: WidgetExt>(anchor: &W, items: &[String], selected: Option<
         // Spacing between rows, like the rest of HeroUI.
         let spacing = fltk::app::menu_linespacing();
         fltk::app::set_menu_linespacing(t.font_size / 2 + 6);
-        let picked = list.pulldown(anchor.x(), anchor.y(), anchor.w(), anchor.h(), None, Some(&*menu));
+        let picked = list.pulldown(anchor.0, anchor.1, anchor.2, anchor.3, None, Some(&*menu));
         fltk::app::set_menu_linespacing(spacing);
         let picked = picked?;
         (0..items.len() as i32).position(|i| menu.at(i).as_ref() == Some(&picked))

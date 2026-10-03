@@ -296,6 +296,15 @@ impl Theme {
         app::set_font_size(self.font_size);
         app::set_font(self.font());
         app::set_visible_focus(false);
+        // Tooltips (hover details in bars and apps).
+        fltk::misc::Tooltip::set_color(self.surface);
+        fltk::misc::Tooltip::set_text_color(self.text);
+        fltk::misc::Tooltip::set_font(self.font());
+        fltk::misc::Tooltip::set_font_size(self.font_size - 1);
+        fltk::misc::Tooltip::set_margin_width(10);
+        fltk::misc::Tooltip::set_margin_height(6);
+        fltk::misc::Tooltip::set_delay(0.5);
+        fltk::misc::Tooltip::set_hoverdelay(0.1);
         RADIUS.store(self.radius, Ordering::Relaxed);
         crate::anim::set_enabled(self.animations);
         app::set_frame_type_cb(ROUNDED, draw_rounded, 0, 0, 0, 0);
