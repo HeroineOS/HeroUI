@@ -1,6 +1,6 @@
 [package]
 name = "heroui"
-version = "0.1.7"
+version = "0.1.8"
 description = "Lightweight Elm-style UI library on fltk-rs for HeroineOS apps"
 repository = "https://github.com/HeroineOS/HeroUI"
 license = "MIT OR Apache-2.0"

@@ -28,7 +28,8 @@ use fltk::window::Window;
 
 use crate::element::Element;
 
-/// `anchor`, with `content` popping down from it while `open(state)`.
+/// `anchor`, with `content` popping down from it (centered under it)
+/// while `open(state)`; it unrolls and rolls up quickly (~120 ms).
 /// `size(state)` is the popover's size; it follows changes while open.
 pub fn popover<S: 'static, M: Clone + 'static>(
     anchor: Element<S, M>,
@@ -76,28 +77,38 @@ pub fn popover_at<S: 'static, M: Clone + 'static>(
         win.resizable(&root);
         win.end();
         // Rounded like the theme where the window can be see-through
-        // (Wayland with the fork), square elsewhere. The panel is painted
-        // first, the content over it.
+        // (Wayland with the fork), square elsewhere. It unrolls when it
+        // opens and rolls up when it closes: `reveal` is 0..1 of its height.
         let round = round_corners(&mut win);
-        win.set_frame(if round { FrameType::NoBox } else { FrameType::FlatBox });
-        win.super_draw_first(!round);
-        win.draw(move |w| {
-            let t = crate::theme::current();
-            if round {
-                let r = t.radius.min(16);
-                #[cfg(feature = "layer-shell")]
-                unsafe {
-                    fltk_sys::window::Fl_wl_clear_rect(0, 0, w.w(), w.h())
-                };
+        let reveal = crate::anim::Tween::new(1.0);
+        win.set_frame(FrameType::NoBox);
+        win.super_draw(false);
+        {
+            let reveal = reveal.clone();
+            win.draw(move |w| {
+                let t = crate::theme::current();
+                let h = ((w.h() as f64) * reveal.get()).round().max(1.0) as i32;
+                let r = RADIUS.with(Cell::get).unwrap_or(t.radius).min(16).min(h / 2);
+                if round {
+                    #[cfg(feature = "layer-shell")]
+                    unsafe {
+                        fltk_sys::window::Fl_wl_clear_rect(0, 0, w.w(), w.h())
+                    };
+                } else {
+                    // X11: no see-through; the unrolled part is the panel.
+                    fltk::draw::set_draw_color(t.background);
+                    fltk::draw::draw_rectf(0, 0, w.w(), w.h());
+                }
+                let r = if round { r } else { 0 };
                 fltk::draw::set_draw_color(t.border);
-                fltk::draw::draw_rounded_rectf(0, 0, w.w(), w.h(), r);
+                fltk::draw::draw_rounded_rectf(0, 0, w.w(), h, r);
                 fltk::draw::set_draw_color(t.background);
-                fltk::draw::draw_rounded_rectf(1, 1, w.w() - 2, w.h() - 2, (r - 1).max(0));
-            } else {
-                fltk::draw::set_draw_color(t.border);
-                fltk::draw::draw_rect(0, 0, w.w(), w.h());
-            }
-        });
+                fltk::draw::draw_rounded_rectf(1, 1, w.w() - 2, h - 2, (r - 1).max(0));
+                fltk::draw::push_clip(0, 0, w.w(), h);
+                w.draw_children();
+                fltk::draw::pop_clip();
+            });
+        }
         if let Some(g) = outer {
             Group::set_current(Some(&g));
         }
@@ -111,7 +122,12 @@ pub fn popover_at<S: 'static, M: Clone + 'static>(
         {
             let wanted = wanted.clone();
             win.handle(move |w, ev| match ev {
+                Event::Show => {
+                    shown_changed(1);
+                    false
+                }
                 Event::Hide => {
+                    shown_changed(-1);
                     if !crate::on_wayland() {
                         fltk::app::set_grab(None::<Window>);
                     }
@@ -138,8 +154,16 @@ pub fn popover_at<S: 'static, M: Clone + 'static>(
         }
 
         let result = anchor.clone();
+        let closing = Rc::new(Cell::new(false));
         ctx.bind(move |s| {
             let want = open(s);
+            if want && win.shown() && closing.get() {
+                // Opened again while rolling up: unroll.
+                closing.set(false);
+                let mut w2 = win.clone();
+                reveal.animate_to(1.0, OPEN, move || w2.redraw());
+                return;
+            }
             if want && win.shown() {
                 // Content arriving (a list filling in) can resize it.
                 let (w, h) = size(s);
@@ -152,8 +176,24 @@ pub fn popover_at<S: 'static, M: Clone + 'static>(
                 return;
             }
             if !want {
+                if closing.get() {
+                    return;
+                }
                 wanted.set(false);
-                win.hide();
+                // Rolls up, then hides (at once with animations off).
+                closing.set(true);
+                let (mut w2, r2, c2) = (win.clone(), reveal.clone(), closing.clone());
+                reveal.animate_to(0.0, CLOSE, move || {
+                    if w2.was_deleted() || !c2.get() {
+                        return;
+                    }
+                    if r2.get() <= 0.0 {
+                        c2.set(false);
+                        w2.hide();
+                    } else {
+                        w2.redraw();
+                    }
+                });
                 return;
             }
             let (w, h) = size(s);
@@ -164,10 +204,43 @@ pub fn popover_at<S: 'static, M: Clone + 'static>(
                 Some((x, y, w, h)) => (anchor.x() + x, anchor.y() + y, w, h),
                 None => (anchor.x(), anchor.y(), anchor.w(), anchor.h()),
             };
+            reveal.set(0.0);
             show_at(&mut win, &*parent, r);
+            let mut w2 = win.clone();
+            reveal.animate_to(1.0, OPEN, move || w2.redraw());
         });
         result
     })
+}
+
+/// How long a popover takes to unroll and to roll up.
+const OPEN: std::time::Duration = std::time::Duration::from_millis(140);
+const CLOSE: std::time::Duration = std::time::Duration::from_millis(100);
+
+thread_local! {
+    /// Corner radius of popovers (None: the theme's).
+    static RADIUS: Cell<Option<i32>> = const { Cell::new(None) };
+    /// Popovers shown: tooltips wait meanwhile (on Wayland a tooltip
+    /// can't open beside a popup that holds the pointer).
+    static SHOWN: Cell<u32> = const { Cell::new(0) };
+}
+
+/// Sets the popovers' corner radius (None: the theme's), e.g. to match a
+/// panel's style.
+pub fn set_radius(r: Option<i32>) {
+    RADIUS.with(|c| c.set(r));
+}
+
+fn shown_changed(delta: i32) {
+    SHOWN.with(|n| {
+        let v = (n.get() as i32 + delta).max(0) as u32;
+        n.set(v);
+        if v > 0 {
+            fltk::misc::Tooltip::disable();
+        } else {
+            fltk::misc::Tooltip::enable(true);
+        }
+    });
 }
 
 thread_local! {
@@ -222,7 +295,7 @@ fn show_at(win: &mut Window, parent: &dyn WindowExt, (ax, ay, aw, ah): (i32, i32
     } else {
         // Below the anchor, kept on the screen.
         let (sx, sy, sw, sh) = fltk::app::screen_xywh(parent.screen_num());
-        let x = (parent.x_root() + ax).clamp(sx, (sx + sw - win.w()).max(sx));
+        let x = (parent.x_root() + ax + aw / 2 - win.w() / 2).clamp(sx, (sx + sw - win.w()).max(sx));
         let below = parent.y_root() + ay + ah;
         let y = if below + win.h() <= sy + sh { below } else { parent.y_root() + ay - win.h() };
         win.set_pos(x, y);
