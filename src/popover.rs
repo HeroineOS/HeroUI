@@ -121,7 +121,22 @@ pub fn popover_at<S: 'static, M: Clone + 'static>(
         win.set_callback(|w| w.hide());
         {
             let wanted = wanted.clone();
+            // X11: the widget a drag started on, which FLTK doesn't give
+            // the release to when it happens outside the popover (its grab
+            // sends it to whatever's under the pointer).
+            let dragging: Rc<Cell<Option<fltk::widget::Widget>>> = Rc::default();
             win.handle(move |w, ev| match ev {
+                Event::Drag if !crate::on_wayland() => {
+                    dragging.set(fltk::app::pushed().map(|p| p.as_base_widget()));
+                    false
+                }
+                Event::Released if !crate::on_wayland() => {
+                    let (x, y) = (fltk::app::event_x(), fltk::app::event_y());
+                    match dragging.take() {
+                        Some(mut d) if (x < 0 || y < 0 || x >= w.w() || y >= w.h()) && !d.was_deleted() => d.handle_event(Event::Released),
+                        _ => false,
+                    }
+                }
                 Event::Show => {
                     shown_changed(1);
                     false
@@ -277,7 +292,64 @@ fn round_corners(win: &mut Window) -> bool {
     false
 }
 
+thread_local! {
+    /// X11: where each shown popover's parent window was (by popover).
+    static PARENT_AT: std::cell::RefCell<std::collections::HashMap<usize, (i32, i32)>> = Default::default();
+}
+
+/// Where the popover holding `w` is, relative to the window it drops down
+/// from (e.g. to follow a drag from the popover onto that window). None
+/// when it isn't shown or it can't be told (Wayland without the fork).
+pub fn offset<W: WidgetExt>(w: &W) -> Option<(i32, i32)> {
+    let win = w.window()?;
+    if !win.shown() {
+        return None;
+    }
+    if crate::on_wayland() {
+        #[cfg(feature = "layer-shell")]
+        {
+            let (mut x, mut y) = (0, 0);
+            let known = unsafe { fltk_sys::window::Fl_Window_wl_popup_position(win.as_widget_ptr() as *mut _, &mut x, &mut y) };
+            return (known != 0).then_some((x, y));
+        }
+        #[cfg(not(feature = "layer-shell"))]
+        return None;
+    }
+    let (px, py) = PARENT_AT.with(|p| p.borrow().get(&(win.as_widget_ptr() as usize)).copied())?;
+    Some((win.x() - px, win.y() - py))
+}
+
+/// During a drag that started in the popover holding `w`: where the
+/// pointer is in the window the popover drops down from, once it has left
+/// the popover (None while it's inside). Far away when it's over neither.
+pub fn dragged_out<W: WidgetExt>(w: &W) -> Option<(i32, i32)> {
+    const NOWHERE: (i32, i32) = (i32::MIN / 2, i32::MIN / 2);
+    let win = w.window()?;
+    let (ex, ey) = (fltk::app::event_x(), fltk::app::event_y());
+    // On Wayland, the drag goes on in the window under the pointer, with
+    // coordinates relative to it.
+    #[cfg(feature = "layer-shell")]
+    if crate::on_wayland() {
+        let ev = unsafe { fltk_sys::window::Fl_Window_event_window() } as usize;
+        if ev != 0 && ev != win.as_widget_ptr() as usize {
+            let parent = PARENT_OF.with(|p| p.borrow().get(&(win.as_widget_ptr() as usize)).copied());
+            return Some(if parent == Some(ev) { (ex, ey) } else { NOWHERE });
+        }
+    }
+    if ex >= 0 && ey >= 0 && ex < win.w() && ey < win.h() {
+        return None;
+    }
+    // Elsewhere (X11), the popover keeps the pointer.
+    Some(offset(w).map_or(NOWHERE, |(ox, oy)| (ox + ex, oy + ey)))
+}
+
+thread_local! {
+    /// Each shown popover's parent window (by popover).
+    static PARENT_OF: std::cell::RefCell<std::collections::HashMap<usize, usize>> = Default::default();
+}
+
 fn show_at(win: &mut Window, parent: &dyn WindowExt, (ax, ay, aw, ah): (i32, i32, i32, i32)) {
+    PARENT_OF.with(|p| p.borrow_mut().insert(win.as_widget_ptr() as usize, parent.as_widget_ptr() as usize));
     if crate::on_wayland() {
         #[cfg(feature = "layer-shell")]
         unsafe {
@@ -299,6 +371,7 @@ fn show_at(win: &mut Window, parent: &dyn WindowExt, (ax, ay, aw, ah): (i32, i32
         let below = parent.y_root() + ay + ah;
         let y = if below + win.h() <= sy + sh { below } else { parent.y_root() + ay - win.h() };
         win.set_pos(x, y);
+        PARENT_AT.with(|p| p.borrow_mut().insert(win.as_widget_ptr() as usize, (parent.x_root(), parent.y_root())));
         win.set_override();
         win.show();
         fltk::app::set_grab(Some(win.clone()));

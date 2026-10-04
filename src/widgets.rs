@@ -26,6 +26,8 @@ use fltk::valuator::HorSlider;
 pub use crate::color_picker::color_button;
 pub use crate::popover::{popover, popover_at, press_button};
 pub use crate::popover::set_radius as set_popover_radius;
+pub use crate::popover::offset as popover_offset;
+pub use crate::popover::dragged_out as popover_dragged_out;
 use crate::element::{relayout_parent, Ctx, Element};
 use crate::hover::hover_amount;
 use crate::theme::{Theme, ROUNDED};
