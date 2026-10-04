@@ -27,6 +27,7 @@ widget touched only when the value changed).
 | `color_button(\|s\| Color, \|Color\| M)` | swatch; click opens a picker popover (saturation/brightness square, hue strip, hex field for pasting, Done). Sends while dragging, so preview live and debounce saving. Closes on Done, Enter, Escape, a tap outside, or a window resize. Drawn inside the app window (overlay group created on open, deleted on close): no extra surface, same on Wayland/X11 |
 | `popover(anchor, \|s\| bool, close_msg, \|s\| (w, h), content)` | `content` drops down centered under `anchor`, unrolling (~140 ms; rolls up on close), (above it at the bottom of the screen) while `open(state)`; `close_msg` is sent when the user closes it (click outside, Escape). Size follows `size(state)` while open. Content is built once with the view (hidden window: no surface). Wayland + fork: a real xdg_popup with a grab (also from layer-shell panels; open it on a button *press*: use `press_button`, act when `b.value()`); X11: override window + pointer grab |
 | `popover_at(anchor, \|s\| Option<(x,y,w,h)>, ...)` | same, dropping down from part of the anchor (one button of a widget that draws several), rect relative to the anchor |
+| `popover_offset(&w)`, `popover_dragged_out(&w)` | where the popover holding `w` is in its parent window; during a drag started in it, where the pointer is in the parent once it left the popover (e.g. dragging an item out onto a panel). Compositors keep sending such a drag to the popover |
 | `set_popover_radius(Option<i32>)` | popovers' corner radius (None: theme), e.g. to match a panel's style. Tooltips pause while a popover is open (Wayland allows popups only on the topmost one) |
 | `press_button(draw)` | `custom_button` whose callback also fires on press (for opening popovers) |
 | `icon(\|s\| String, size)` | icon centered in its space: built-in line icon in the theme text color, freedesktop theme icon (app icons, `Icon=` names), or an image path. Give it `.fixed(size + 6)` in a row |
@@ -38,6 +39,8 @@ Typical heights: row of buttons/inputs 34, toggle 28, list item 30, progress 10,
 Helpers for your own widgets: `custom_button(draw)` (cheap clickable base), `repaint(&mut w)`
 (redraw with background), `heroui::hover::is_hovered(&w)`, `heroui::hover::hover_amount(&w)`
 (0..1, fades in/out ~120 ms: blend the hover color by it, e.g. `mix(bg, hover_bg, a)`),
+`heroui::hover::HoverFade` (the same for a widget drawing several parts: `set(Some(i), &w)`
+from its handler, `amount(i)` when drawing),
 `heroui::popup::context_menu(&["Pin", "-Close"])` (right-click menu at the mouse, blocks,
 `Some(index)`; "-" = line above; call it from the click's handler, with no RefCell borrowed:
 it runs FLTK's menu loop), `mix(a, b, t)` (blend colors),

@@ -99,3 +99,57 @@ pub(crate) fn update() {
         });
     });
 }
+
+/// Hover fades for a widget that draws several buttons of its own (a
+/// taskbar, chips): the newly hovered part fades in while the previous one
+/// fades out, ~120 ms (instant with animations off). The widget tracks
+/// the pointer itself and calls [`set`](HoverFade::set); its draw code asks
+/// [`amount`](HoverFade::amount).
+pub struct HoverFade {
+    pub cur: Option<usize>,
+    prev: Option<usize>,
+    t: crate::anim::Tween,
+}
+
+impl Default for HoverFade {
+    fn default() -> Self {
+        HoverFade { cur: None, prev: None, t: crate::anim::Tween::new(1.0) }
+    }
+}
+
+impl HoverFade {
+    /// Part `new` is hovered now (None: none); `w` is repainted while it
+    /// fades.
+    pub fn set(&mut self, new: Option<usize>, w: &Widget) {
+        if new == self.cur {
+            return;
+        }
+        self.prev = self.cur;
+        self.cur = new;
+        self.t.set(0.0);
+        let mut w = w.clone();
+        self.t.animate_to(1.0, std::time::Duration::from_millis(120), move || {
+            if !w.was_deleted() {
+                crate::widgets::repaint(&mut w);
+            }
+        });
+    }
+
+    /// How hovered part `i` looks, 0.0 to 1.0.
+    pub fn amount(&self, i: usize) -> f32 {
+        let t = self.t.get() as f32;
+        if Some(i) == self.cur {
+            t
+        } else if Some(i) == self.prev {
+            1.0 - t
+        } else {
+            0.0
+        }
+    }
+
+    /// Forgets the hover (the parts changed).
+    pub fn clear(&mut self) {
+        self.cur = None;
+        self.prev = None;
+    }
+}
