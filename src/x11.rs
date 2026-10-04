@@ -29,6 +29,20 @@ extern "C" {
     fn XMapWindow(d: *mut c_void, w: XWindow) -> c_int;
     fn XDefaultScreen(d: *mut c_void) -> c_int;
     fn XSync(d: *mut c_void, discard: c_int) -> c_int;
+    fn XSetInputFocus(d: *mut c_void, w: XWindow, revert_to: c_int, time: std::ffi::c_ulong) -> c_int;
+}
+
+/// Gives `win` the keyboard focus. Window managers don't focus
+/// override-redirect windows (overlays), and without it FLTK gets key
+/// presses but no text.
+pub(crate) fn focus(win: &Window) {
+    const REVERT_TO_PARENT: c_int = 2;
+    let d = fltk::app::display();
+    let w = win.raw_handle() as usize as XWindow;
+    unsafe {
+        XSetInputFocus(d, w, REVERT_TO_PARENT, 0);
+        XSync(d, 0);
+    }
 }
 
 const XA_ATOM: Atom = 4;
@@ -37,7 +51,7 @@ const PROP_MODE_REPLACE: c_int = 0;
 
 /// True if `settings` asks for anything this module sets.
 pub(crate) fn needed(s: &Settings) -> bool {
-    s.kind != WindowKind::Normal || s.above || s.below || s.sticky || s.skip_taskbar || s.reserve.is_some()
+    (s.kind != WindowKind::Normal && s.kind != WindowKind::Overlay) || s.above || s.below || s.sticky || s.skip_taskbar || s.reserve.is_some()
 }
 
 /// Sets the hints on a shown window. Window-manager hints are read when a
@@ -66,6 +80,8 @@ pub(crate) fn apply(win: &Window, s: &Settings) {
         WindowKind::Dialog => "_NET_WM_WINDOW_TYPE_DIALOG",
         WindowKind::Utility => "_NET_WM_WINDOW_TYPE_UTILITY",
         WindowKind::Notification => "_NET_WM_WINDOW_TYPE_NOTIFICATION",
+        // Override-redirect: the window manager doesn't see it.
+        WindowKind::Overlay => "_NET_WM_WINDOW_TYPE_DROPDOWN_MENU",
     };
     set("_NET_WM_WINDOW_TYPE", XA_ATOM, &[atom(kind) as c_long]);
 

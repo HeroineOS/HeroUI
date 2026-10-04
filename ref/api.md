@@ -14,7 +14,7 @@ heroui::run(app, Settings::new("Title").size(w, h)) -> Result<(), FltkError>
 ```
 `Settings` builders: `.size(w,h)` (default 480x320), `.position(x,y)`, `.resizable(bool)`
 (default true), `.decorated(bool)` (false = borderless), `.class("x")` (WM/compositor rules),
-`.kind(WindowKind::{Normal,Dock,Desktop,Dialog,Utility,Notification})`, `.above(b)`, `.below(b)`,
+`.kind(WindowKind::{Normal,Dock,Desktop,Dialog,Utility,Notification,Overlay})`, `.above(b)`, `.below(b)`,
 `.sticky(b)` (all workspaces), `.skip_taskbar(b)`, `.reserve(Edge::Top, px)` (strut).
 Presets: `Settings::panel(title, edge, thickness)`, `Settings::desktop_widget(title, x, y, w, h)`.
 On X11/XWayland these are EWMH hints. On Wayland, Dock/Desktop/Notification become
@@ -26,7 +26,12 @@ a normal window. `above/below/sticky/skip_taskbar` have no Wayland meaning (laye
 it). Wayland apps can't position regular windows; `position` is ignored there.
 `heroui::on_wayland()` tells which backend runs. Window class (= Wayland app_id) defaults
 to the executable name. Docks never take keyboard focus (a click on a taskbar must not
-pull focus from the window it activates).
+pull focus from the window it activates). Overlay (launchers, menus): on Wayland a
+layer-shell surface over the whole screen (panels too) that takes the keyboard; with
+`transparent` the app draws its panel where it wants and clicks elsewhere land on it (close
+then). On X11 a borderless override window at `position` that grabs the pointer and gets
+the keyboard focus; during the grab FLTK sends keys to the window, not the focused widget,
+so forward them (see HeroLauncher). `heroui::is_layer()` tells which you got.
 
 `.transparent(true)`: the window is see-through where nothing is drawn; each full repaint
 starts cleared instead of filled with the theme background, so widgets that paint their own

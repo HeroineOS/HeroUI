@@ -14,7 +14,7 @@ use crate::{Settings, WindowKind};
 
 /// True if `settings` describes a desktop-shell window (layer-shell on Wayland).
 pub(crate) fn is_shell_window(s: &Settings) -> bool {
-    matches!(s.kind, WindowKind::Dock | WindowKind::Desktop | WindowKind::Notification)
+    matches!(s.kind, WindowKind::Dock | WindowKind::Desktop | WindowKind::Notification | WindowKind::Overlay)
 }
 
 /// Decides how a shell window is shown, before FLTK opens its display.
@@ -143,11 +143,13 @@ pub(crate) fn apply_layer(win: &fltk::window::Window, s: &Settings) {
     // FL/wayland.H: Fl_Wl_Layer, Fl_Wl_Anchor, Fl_Wl_Keyboard
     const BOTTOM: c_int = 1;
     const TOP: c_int = 2;
+    const OVERLAY: c_int = 3;
     const A_TOP: c_int = 1;
     const A_BOTTOM: c_int = 2;
     const A_LEFT: c_int = 4;
     const A_RIGHT: c_int = 8;
     const KEYBOARD_NONE: c_int = 0;
+    const KEYBOARD_EXCLUSIVE: c_int = 1;
 
     let (x, y) = s.position.unwrap_or((0, 0));
     // (layer, anchor, exclusive zone, keyboard, margins top/right/bottom/left)
@@ -168,6 +170,8 @@ pub(crate) fn apply_layer(win: &fltk::window::Window, s: &Settings) {
         // Positioned like on X11, from the screen's top-left corner,
         // ignoring space reserved by panels (-1).
         WindowKind::Desktop => (BOTTOM, A_TOP | A_LEFT, -1, KEYBOARD_NONE, (y, 0, 0, x)),
+        // The whole screen, over panels (-1), typed into right away.
+        WindowKind::Overlay => (OVERLAY, A_TOP | A_BOTTOM | A_LEFT | A_RIGHT, -1, KEYBOARD_EXCLUSIVE, (0, 0, 0, 0)),
         _ => (TOP, A_TOP | A_LEFT, 0, KEYBOARD_NONE, (y, 0, 0, x)),
     };
     let name = s.class.as_deref().unwrap_or(&s.title);

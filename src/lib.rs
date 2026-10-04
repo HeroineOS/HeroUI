@@ -163,6 +163,14 @@ pub enum WindowKind {
     Utility,
     /// Notifications and OSDs.
     Notification,
+    /// Launchers, menus, lock screens: on Wayland a layer-shell surface over
+    /// the whole screen (panels too) that takes the keyboard; see-through
+    /// with [`Settings::transparent`], so the app draws its panel where it
+    /// wants and a click elsewhere lands on it (to close it). Without
+    /// layer-shell (X11): a borderless window at [`Settings::position`]
+    /// that grabs the pointer, so clicks elsewhere come to it with
+    /// coordinates outside it. [`is_layer`] tells which.
+    Overlay,
 }
 
 /// A screen edge, for [`Settings::reserve`].
@@ -314,6 +322,11 @@ pub fn run<A: App>(mut app: A, mut settings: Settings) -> Result<(), fltk::prelu
     if let Some((x, y)) = settings.position.filter(|_| !layer) {
         win.set_pos(x, y);
     }
+    LAYER.with(|l| l.set(layer));
+    let overlay_x11 = settings.kind == WindowKind::Overlay && !layer;
+    if overlay_x11 && !on_wayland() {
+        win.set_override();
+    }
     // The X11 class / Wayland app_id compositors match rules on; default
     // to the executable's name rather than FLTK's generic "FLTK".
     let class = settings.class.clone().or_else(|| {
@@ -403,6 +416,19 @@ pub fn run<A: App>(mut app: A, mut settings: Settings) -> Result<(), fltk::prelu
     }
     let _ = layer;
     win.show();
+    if overlay_x11 && !on_wayland() {
+        fltk::app::set_grab(Some(win.clone()));
+        // Once it's mapped (focusing an unmapped window is an X error).
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            let win = win.clone();
+            fltk::app::add_timeout3(0.05, move |_| {
+                if win.shown() && win.visible() {
+                    x11::focus(&win);
+                }
+            });
+        }
+    }
     #[cfg(all(unix, not(target_os = "macos")))]
     if !on_wayland() && x11::needed(&settings) {
         x11::apply(&win, &settings);
@@ -473,6 +499,7 @@ pub fn run<A: App>(mut app: A, mut settings: Settings) -> Result<(), fltk::prelu
 
 thread_local! {
     static TRANSPARENT: Cell<bool> = const { Cell::new(false) };
+    static LAYER: Cell<bool> = const { Cell::new(false) };
 }
 
 /// True if the window asked for [`Settings::transparent`] really is
@@ -481,6 +508,13 @@ thread_local! {
 /// differently (e.g. bar islands in a contrasting color).
 pub fn is_transparent() -> bool {
     TRANSPARENT.with(Cell::get)
+}
+
+/// True if the window is a native layer-shell surface (a panel, desktop
+/// widget, notification or overlay on a Wayland compositor that has
+/// wlr-layer-shell).
+pub fn is_layer() -> bool {
+    LAYER.with(Cell::get)
 }
 
 /// True when FLTK is running on its Wayland backend (hybrid builds pick
