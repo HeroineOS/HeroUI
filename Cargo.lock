@@ -80,7 +80,7 @@ dependencies = [
 
 [[package]]
 name = "heroui"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "fltk",
  "fltk-sys",
