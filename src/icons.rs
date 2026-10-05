@@ -205,10 +205,58 @@ fn render(name: &str, size: i32, color: Color, builtin: bool) -> Option<RgbImage
         svg_to_rgb(SvgImage::from_data(&builtin_svg(name, color)?).ok()?, px)?
     } else {
         let path = if Path::new(name).is_absolute() { Some(PathBuf::from(name)) } else { find(name) }?;
-        load_sized(&path, px)?
+        // Symbolic icons are one dark color meant to be recolored (GTK
+        // does the same); other icons keep their own colors.
+        if is_symbolic(&path) {
+            let svg = recolor(&std::fs::read_to_string(&path).ok()?, color);
+            svg_to_rgb(SvgImage::from_data(&svg).ok()?, px)?
+        } else {
+            load_sized(&path, px)?
+        }
     };
     img.scale(size, size, true, true);
     Some(img)
+}
+
+/// True for a monochrome "symbolic" icon (by its name or its folder).
+fn is_symbolic(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e == "svg")
+        && (path.file_stem().is_some_and(|n| n.to_string_lossy().ends_with("-symbolic")) || path.components().any(|c| c.as_os_str() == "symbolic"))
+}
+
+/// An SVG's fills and strokes in `color` (for symbolic icons): colors are
+/// replaced, "none" and "currentColor" left alone.
+fn recolor(svg: &str, color: Color) -> String {
+    let (r, g, b) = color.to_rgb();
+    let c = format!("#{r:02x}{g:02x}{b:02x}");
+    let mut out = String::with_capacity(svg.len());
+    let mut rest = svg;
+    while let Some(i) = rest.find("fill").or_else(|| rest.find("stroke")) {
+        let key_len = if rest[i..].starts_with("fill") { 4 } else { 6 };
+        let after = &rest[i + key_len..];
+        // fill="#rrggbb" or fill:#rrggbb (in a style attribute).
+        let (sep, quote) = match after.chars().next() {
+            Some('=') => ("=", after[1..].chars().next()),
+            Some(':') => (":", None),
+            _ => {
+                out.push_str(&rest[..i + key_len]);
+                rest = after;
+                continue;
+            }
+        };
+        let value_at = i + key_len + sep.len() + usize::from(quote.is_some());
+        let value = &rest[value_at..];
+        let end = match quote {
+            Some(q) => value.find(q).unwrap_or(value.len()),
+            None => value.find([';', '"', '\'', ' ']).unwrap_or(value.len()),
+        };
+        let v = &value[..end];
+        out.push_str(&rest[..value_at]);
+        out.push_str(if v == "none" || v == "currentColor" { v } else { &c });
+        rest = &rest[value_at + end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// SVGs rasterize lazily; `normalize` does it now, at `px`.
@@ -314,8 +362,8 @@ fn search(name: &str) -> Option<PathBuf> {
         bases.insert(0, PathBuf::from(h).join(".icons"));
     }
     // Scalable first, then big enough bitmaps, then whatever exists.
-    const SIZES: [&str; 10] = ["scalable", "48x48", "64x64", "96x96", "128x128", "256x256", "32x32", "24x24", "22x22", "16x16"];
-    const KINDS: [&str; 5] = ["apps", "places", "devices", "status", "categories"];
+    const SIZES: [&str; 11] = ["scalable", "symbolic", "48x48", "64x64", "96x96", "128x128", "256x256", "32x32", "24x24", "22x22", "16x16"];
+    const KINDS: [&str; 6] = ["apps", "places", "devices", "status", "categories", "actions"];
     for theme in themes(&bases) {
         for base in &bases {
             let dir = base.join(&theme);
@@ -349,9 +397,80 @@ fn search(name: &str) -> Option<PathBuf> {
     None
 }
 
+/// What an icon is, for browsing: the built-in ones, then the theme's by
+/// its folders.
+pub const KINDS: [&str; 7] = ["Built-in", "Apps", "Places", "Devices", "Status", "Categories", "Actions"];
+
+/// (icon name, kind) for every icon, see [`library`].
+pub type Library = std::rc::Rc<Vec<(String, usize)>>;
+
+thread_local! {
+    static LIBRARY: RefCell<Option<Library>> = const { RefCell::new(None) };
+}
+
+/// Every icon there is to pick from: (name, index into [`KINDS`]), the
+/// built-in ones first, then the icon theme's (and those it inherits),
+/// each name once, sorted. Read once, when first asked for.
+pub fn library() -> Library {
+    if let Some(l) = LIBRARY.with(|l| l.borrow().clone()) {
+        return l;
+    }
+    let mut out: Vec<(String, usize)> = BUILTIN.iter().map(|n| (n.to_string(), 0)).collect();
+    let mut seen: std::collections::HashSet<String> = out.iter().map(|(n, _)| n.clone()).collect();
+    let mut bases: Vec<PathBuf> = data_dirs().iter().map(|d| d.join("icons")).collect();
+    if let Some(h) = std::env::var_os("HOME") {
+        bases.insert(0, PathBuf::from(h).join(".icons"));
+    }
+    let folders = ["apps", "places", "devices", "status", "categories", "actions"];
+    let mut theme_icons: Vec<(String, usize)> = Vec::new();
+    for theme in themes(&bases) {
+        for base in &bases {
+            let dir = base.join(&theme);
+            let Ok(sizes) = std::fs::read_dir(&dir) else { continue };
+            for size in sizes.flatten() {
+                let size = size.path();
+                for (k, kind) in folders.iter().enumerate() {
+                    // <size>/<kind> or <kind>/<size>.
+                    let mut dirs = vec![size.join(kind)];
+                    if size.file_name().is_some_and(|n| n == *kind) {
+                        if let Ok(rd) = std::fs::read_dir(&size) {
+                            dirs.extend(rd.flatten().map(|e| e.path()));
+                        }
+                    }
+                    for d in dirs {
+                        let Ok(files) = std::fs::read_dir(&d) else { continue };
+                        for f in files.flatten() {
+                            let name = f.file_name().to_string_lossy().into_owned();
+                            let Some(stem) = name.strip_suffix(".svg").or_else(|| name.strip_suffix(".png")) else { continue };
+                            if seen.insert(stem.to_owned()) {
+                                theme_icons.push((stem.to_owned(), k + 1));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    theme_icons.sort();
+    out.extend(theme_icons);
+    let l = std::rc::Rc::new(out);
+    LIBRARY.with(|c| *c.borrow_mut() = Some(l.clone()));
+    l
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recolors_symbolic() {
+        let c = Color::from_rgb(1, 2, 3);
+        let svg = r##"<g fill="#2e3436"><path d="M0 0" fill="none"/><path style="fill:#888;stroke:#999" stroke="currentColor"/></g>"##;
+        let out = recolor(svg, c);
+        assert_eq!(out, r##"<g fill="#010203"><path d="M0 0" fill="none"/><path style="fill:#010203;stroke:#010203" stroke="currentColor"/></g>"##);
+        assert!(is_symbolic(Path::new("/x/symbolic/apps/a.svg")) && is_symbolic(Path::new("/x/a-symbolic.svg")));
+        assert!(!is_symbolic(Path::new("/x/apps/a.svg")) && !is_symbolic(Path::new("/x/a-symbolic.png")));
+    }
 
     #[test]
     fn builtins_are_valid_svg() {

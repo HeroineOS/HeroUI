@@ -24,6 +24,7 @@ use fltk::prelude::*;
 use fltk::valuator::HorSlider;
 
 pub use crate::color_picker::color_button;
+pub use crate::icon_picker::icon_button;
 pub use crate::popover::{popover, popover_at, press_button};
 pub use crate::popover::set_radius as set_popover_radius;
 pub use crate::popover::offset as popover_offset;

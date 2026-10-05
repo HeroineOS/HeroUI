@@ -30,6 +30,7 @@ widget touched only when the value changed).
 | `popover_offset(&w)`, `popover_dragged_out(&w)` | where the popover holding `w` is in its parent window; during a drag started in it, where the pointer is in the parent once it left the popover (e.g. dragging an item out onto a panel). Compositors keep sending such a drag to the popover |
 | `set_popover_radius(Option<i32>)` | popovers' corner radius (None: theme), e.g. to match a panel's style. Tooltips pause while a popover is open (Wayland allows popups only on the topmost one) |
 | `press_button(draw)` | `custom_button` whose callback also fires on press (for opening popovers) |
+| `icon_button(\|s\| String, \|String\| M)` | button showing an icon; click opens a searchable library (built-in icons + the icon theme's, by kind), sends the name picked ("" for None). Drawn inside the app window like `color_button` |
 | `icon(\|s\| String, size)` | icon centered in its space: built-in line icon in the theme text color, freedesktop theme icon (app icons, `Icon=` names), or an image path. Give it `.fixed(size + 6)` in a row |
 | `list(\|s\| usize, \|i\| Element)` | column rebuilt when count changes; items should be `.fixed` |
 | `embed(lens, map, child)` | plug in a component (api.md) |
