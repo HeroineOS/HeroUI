@@ -51,6 +51,19 @@ straight to 1.0 when the theme has `animations = false`. `toggle` uses it for it
 `tween.animate_to(target, duration, move || w.redraw())` (a new target cancels the running
 move). `tween.follow(..)` moves at constant speed instead: successive targets join into
 one continuous motion (what `progress` uses; measured: steady 3-5 px per 30 ms, no stalls).
+`tween.animate_ease(target, duration, ease, redraw)` takes another curve: `anim::snappy`
+(appearing: quick, slight overshoot that settles), `anim::ease_in` (leaving), `ease_out`,
+`linear`, or your own via `anim::cubic_bezier(p1, p2, t)` (CSS-style).
+
+Animating a whole panel (open/close, Wayland): `heroui::fx::Snapshot`. In the panel's `draw`
+callback, `snap.record(rect, || draw everything)` once (wrap in `draw::push_no_clip()` /
+`pop_clip()` so all of it is recorded), then each frame `snap.paint(origin, scale, offset,
+alpha)`: one image copy, no widget drawing. Repaint only `fx::union(fx::bounds(..) of the last
+frame, of this one)` with `win.set_damage_area(Damage::All, ..)`, so the compositor gets just
+that area, not the whole window. `record` returns false off Wayland (draw normally). Groups
+with a custom `draw` that draws their children must call `g.super_draw(false)`, or FLTK
+draws the children too (twice the work, and over the effect). HeroLauncher's overlay is the
+reference use (~1-2 ms per frame on a software renderer).
 
 Icons in custom drawing: `heroui::icons::draw(name, x, y, size, color) -> bool` (false = not
 found, nothing drawn). Built-ins (`heroui::icons::BUILTIN`): apps, app, battery,

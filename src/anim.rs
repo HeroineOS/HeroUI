@@ -89,6 +89,12 @@ impl Tween {
         self.move_to(target, duration, linear, redraw)
     }
 
+    /// Like [`Tween::animate_to`] with another easing curve (e.g.
+    /// [`snappy`] to open, [`ease_in`] to close).
+    pub fn animate_ease(&self, target: f64, duration: Duration, ease: fn(f64) -> f64, redraw: impl FnMut() + 'static) {
+        self.move_to(target, duration, ease, redraw)
+    }
+
     fn move_to(&self, target: f64, duration: Duration, ease: fn(f64) -> f64, mut redraw: impl FnMut() + 'static) {
         let generation = self.0.generation.get().wrapping_add(1);
         self.0.generation.set(generation);
@@ -112,6 +118,37 @@ pub fn ease_out(t: f64) -> f64 {
     1.0 - (1.0 - t).powi(3)
 }
 
+/// Quadratic ease-in: slow start, fast end (things leaving).
+pub fn ease_in(t: f64) -> f64 {
+    t * t
+}
+
+/// Quick but visible from the first frame, overshooting a little and
+/// settling: things appearing.
+pub fn snappy(t: f64) -> f64 {
+    cubic_bezier((0.3, 0.7), (0.25, 1.1), t)
+}
+
+/// A CSS-style cubic bezier easing curve through (0, 0), `p1`, `p2` and
+/// (1, 1), at time `t`.
+pub fn cubic_bezier(p1: (f64, f64), p2: (f64, f64), t: f64) -> f64 {
+    if t <= 0.0 || t >= 1.0 {
+        return t.clamp(0.0, 1.0);
+    }
+    let b = |a: f64, b: f64, s: f64| 3.0 * a * s * (1.0 - s) * (1.0 - s) + 3.0 * b * s * s * (1.0 - s) + s * s * s;
+    // Find s with x(s) = t (x is increasing), by bisection.
+    let (mut lo, mut hi) = (0.0, 1.0);
+    for _ in 0..24 {
+        let mid = (lo + hi) / 2.0;
+        if b(p1.0, p2.0, mid) < t {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    b(p1.1, p2.1, (lo + hi) / 2.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,6 +158,9 @@ mod tests {
         assert_eq!(ease_out(0.0), 0.0);
         assert_eq!(ease_out(1.0), 1.0);
         assert!(ease_out(0.5) > 0.5);
+        assert!(snappy(0.0).abs() < 1e-4 && (snappy(1.0) - 1.0).abs() < 1e-4);
+        assert!(snappy(0.3) > 0.5 && snappy(0.06) < 0.3 && (1..100).any(|i| snappy(i as f64 / 100.0) > 1.0));
+        assert_eq!(ease_in(1.0), 1.0);
     }
 
     #[test]

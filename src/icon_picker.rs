@@ -86,7 +86,8 @@ struct Picker {
     scroll: i32,
     hover: Option<usize>,
     /// Touch scrolling: the last pointer y.
-    drag_y: Option<i32>,
+    /// A press on the grid: (last y, scrolled since the press).
+    drag_y: Option<(i32, bool)>,
 }
 
 impl Picker {
@@ -276,14 +277,14 @@ fn open(anchor: &Button, current: String, on_pick: Rc<dyn Fn(String)>) {
                         o.redraw();
                         return true;
                     }
-                    s.drag_y = Some(ey);
+                    s.drag_y = Some((ey, false));
                     true
                 }
                 Event::Drag => {
-                    if let Some(y0) = s.drag_y {
-                        if (ey - y0).abs() > 4 {
+                    if let Some((y0, moved)) = s.drag_y {
+                        if moved || (ey - y0).abs() > 4 {
                             s.scroll_by(y0 - ey);
-                            s.drag_y = Some(ey);
+                            s.drag_y = Some((ey, true));
                             s.hover = None;
                             o.redraw();
                         }
@@ -291,9 +292,9 @@ fn open(anchor: &Button, current: String, on_pick: Rc<dyn Fn(String)>) {
                     true
                 }
                 Event::Released => {
-                    let Some(y0) = s.drag_y.take() else { return false };
+                    let Some((_, moved)) = s.drag_y.take() else { return false };
                     // A tap (not a scroll) on an icon picks it.
-                    if (ey - y0).abs() <= 4 {
+                    if !moved {
                         if let Some(i) = s.at(ex, ey) {
                             let name = icons::library()[s.shown[i]].0.clone();
                             drop(s);
