@@ -174,6 +174,12 @@ struct TweenInner {
     span: Cell<f64>,
 }
 
+impl Default for Tween {
+    fn default() -> Self {
+        Tween::new(0.0)
+    }
+}
+
 impl Tween {
     pub fn new(value: f64) -> Tween {
         Tween(std::rc::Rc::new(TweenInner {
