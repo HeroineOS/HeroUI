@@ -190,11 +190,19 @@ impl<S: 'static, M: 'static> Element<S, M> {
             g.super_draw(false);
             {
                 let t = t.clone();
+                let snap = crate::fx::Snapshot::new();
                 g.draw(move |g| {
                     let v = t.get();
-                    let mut g2 = g.clone();
                     let rect = (g.x(), g.y(), g.w(), g.h());
-                    crate::fx::draw_transformed(rect, 1.0, (0.0, (1.0 - v) * 18.0), v.clamp(0.0, 1.0), move || g2.draw_children());
+                    let mut g2 = g.clone();
+                    // The page's picture is reused for a few frames: drawing
+                    // a whole page every frame is slow on ARM boards.
+                    if v < 1.0 && snap.reuse(rect, 4, || g2.draw_children()) {
+                        snap.paint((0.0, 0.0), (1.0, 1.0), (0.0, (1.0 - v) * 18.0), v.clamp(0.0, 1.0));
+                        return;
+                    }
+                    snap.clear();
+                    g.draw_children();
                 });
             }
             let mut w = g.clone();
@@ -211,7 +219,7 @@ impl<S: 'static, M: 'static> Element<S, M> {
                     if !first && crate::on_wayland() {
                         t.set(0.0);
                         let w2 = w.clone();
-                        t.animate_ease(1.0, std::time::Duration::from_millis(260), crate::anim::ease_out_quint, move || {
+                        t.animate_ease(1.0, std::time::Duration::from_millis(340), crate::anim::ease_out_quint, move || {
                             if let Some(mut win) = w2.window() {
                                 win.set_damage_area(fltk::enums::Damage::All, w2.x(), w2.y(), w2.w(), w2.h());
                             }

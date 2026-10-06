@@ -1,7 +1,8 @@
 //! Short, cheap animations. One frame clock drives every running
-//! animation of the app, so all of them step together, once per frame
-//! (at the theme's `frame_rate`), and a frame repaints only the widgets
-//! that move. Nothing ticks when nothing moves. With the theme's
+//! animation of the app, so all of them step together, once per frame,
+//! and a frame repaints only the widgets that move. On Wayland the frames
+//! are paced by the display (a step right after each shown frame);
+//! elsewhere by a timer at the theme's `frame_rate`. Nothing ticks when nothing moves. With the theme's
 //! `animations = false` (reduced motion, battery saving) every animation
 //! jumps to its end.
 //!
@@ -54,13 +55,76 @@ fn frame_interval() -> f64 {
 /// from the next frame on until it returns false.
 fn schedule(job: Job) {
     JOBS.with(|j| j.borrow_mut().push(job));
+    pace_by_display();
     if !TICKING.with(|t| t.replace(true)) {
-        fltk::app::add_timeout3(frame_interval(), tick);
+        fltk::app::add_timeout3(frame_interval(), timer_tick);
     }
 }
 
-fn tick(handle: fltk::app::TimeoutHandle) {
+thread_local! {
+    /// When the jobs last ran.
+    static LAST_TICK: Cell<Option<Instant>> = const { Cell::new(None) };
+    static RUNNING: Cell<bool> = const { Cell::new(false) };
+    static PACED: Cell<bool> = const { Cell::new(false) };
+    static DEFERRED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// On Wayland, steps animations when the compositor reports a shown frame
+/// (once per display refresh), not on a timer: a timer drifts against the
+/// refresh, so some frames would show a step that's nearly a frame old and
+/// others a fresh one, and motion looks uneven even at 60 Hz.
+fn pace_by_display() {
+    #[cfg(feature = "layer-shell")]
+    if !PACED.with(|p| p.replace(true)) && crate::on_wayland() {
+        unsafe { fltk_sys::window::Fl_wl_frame_hook(Some(frame_shown)) };
+    }
+}
+
+#[cfg(feature = "layer-shell")]
+unsafe extern "C" fn frame_shown() {
+    if !TICKING.with(Cell::get) {
+        return;
+    }
     let now = Instant::now();
+    let since = LAST_TICK.with(Cell::get).map_or(f64::MAX, |t| now.duration_since(t).as_secs_f64());
+    if since >= frame_interval() * 0.5 {
+        run_jobs(now);
+    } else if !DEFERRED.with(|d| d.replace(true)) {
+        // Early: another window reporting the same refresh, or a
+        // compositor that reports frames at once (no vsync). Step when the
+        // frame is due instead.
+        fltk::app::add_timeout3(frame_interval() - since, |_| {
+            DEFERRED.with(|d| d.set(false));
+            if TICKING.with(Cell::get) {
+                let now = Instant::now();
+                if LAST_TICK.with(Cell::get).is_none_or(|t| now.duration_since(t).as_secs_f64() >= frame_interval() * 0.5) {
+                    run_jobs(now);
+                }
+            }
+        });
+    }
+}
+
+/// The timer: the clock off Wayland, and the fallback when no frames are
+/// being shown (nothing has been drawn yet, or the window is hidden).
+fn timer_tick(handle: fltk::app::TimeoutHandle) {
+    let now = Instant::now();
+    let paced = PACED.with(Cell::get)
+        && LAST_TICK.with(Cell::get).is_some_and(|t| now.duration_since(t).as_secs_f64() < frame_interval() * 1.5);
+    let more = if paced { JOBS.with(|j| !j.borrow().is_empty()) } else { run_jobs(now) };
+    if more {
+        fltk::app::repeat_timeout3(frame_interval(), handle);
+    } else {
+        TICKING.with(|t| t.set(false));
+    }
+}
+
+/// Runs every job once; whether any continue.
+fn run_jobs(now: Instant) -> bool {
+    if RUNNING.with(|r| r.replace(true)) {
+        return true;
+    }
+    LAST_TICK.with(|t| t.set(Some(now)));
     // Taken out while they run: a job may start other animations.
     let mut jobs = JOBS.with(|j| std::mem::take(&mut *j.borrow_mut()));
     jobs.retain_mut(|job| job(now));
@@ -70,11 +134,8 @@ fn tick(handle: fltk::app::TimeoutHandle) {
         *j = jobs;
         !j.is_empty()
     });
-    if more {
-        fltk::app::repeat_timeout3(frame_interval(), handle);
-    } else {
-        TICKING.with(|t| t.set(false));
-    }
+    RUNNING.with(|r| r.set(false));
+    more
 }
 
 /// Default length of UI transitions.
@@ -423,6 +484,13 @@ pub fn ease_in(t: f64) -> f64 {
 /// settling: things appearing.
 pub fn snappy(t: f64) -> f64 {
     cubic_bezier((0.3, 0.7), (0.25, 1.1), t)
+}
+
+/// Things appearing, the soft way: moves most of the way early, then a
+/// long gentle landing with a hint of overshoot (more frames in the part
+/// the eye follows, so it reads smoother at 60 Hz).
+pub fn glide(t: f64) -> f64 {
+    cubic_bezier((0.2, 0.9), (0.25, 1.04), t)
 }
 
 /// A CSS-style cubic bezier easing curve through (0, 0), `p1`, `p2` and

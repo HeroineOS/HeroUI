@@ -57,6 +57,8 @@ fn context() -> Option<*mut c_void> {
 pub struct Snapshot {
     pattern: Cell<Option<*mut c_void>>,
     rect: Cell<(i32, i32, i32, i32)>,
+    /// Frames since it was recorded (see [`Snapshot::reuse`]).
+    age: Cell<u32>,
 }
 
 impl Snapshot {
@@ -97,6 +99,21 @@ impl Snapshot {
         }
         let _ = (rect, draw);
         false
+    }
+
+    /// For animations of content that may change while they run: records
+    /// `draw` when there's no picture yet, the rectangle changed, or it's
+    /// `every` frames old, and otherwise keeps the picture (drawing all the
+    /// widgets every frame can take longer than a frame on slow ARM boards).
+    /// Whether there's a picture to paint.
+    pub fn reuse(&self, rect: (i32, i32, i32, i32), every: u32, draw: impl FnOnce()) -> bool {
+        let age = self.age.get();
+        if self.is_recorded() && self.rect.get() == rect && age + 1 < every {
+            self.age.set(age + 1);
+            return true;
+        }
+        self.age.set(0);
+        draw_no_clip(|| self.record(rect, draw))
     }
 
     /// Paints the picture scaled by `scale` (x, y) around the point
@@ -296,26 +313,23 @@ impl PopIn {
                 if v != 1.0 {
                     let r = grow(rect());
                     let mut g2 = g.clone();
-                    draw_no_clip(|| {
-                        p.0.snap.record(r, || {
-                            paint(&mut g2);
-                            g2.draw_children();
-                        })
-                    });
-                    if p.0.snap.is_recorded() {
+                    if p.0.snap.reuse(r, 4, || {
+                        paint(&mut g2);
+                        g2.draw_children();
+                    }) {
                         let (o, s, d, a) = p.0.shape(r, v);
                         p.0.snap.paint(o, s, d, a);
-                        p.0.snap.clear();
                         return;
                     }
                 }
+                p.0.snap.clear();
                 paint(g);
                 g.draw_children();
             });
         }
         if crate::anim::enabled() && context_possible() {
             let p2 = p.clone();
-            p.0.t.animate_ease(1.0, std::time::Duration::from_millis(240), crate::anim::snappy, move || p2.frame(&*rect));
+            p.0.t.animate_ease(1.0, std::time::Duration::from_millis(340), crate::anim::glide, move || p2.frame(&*rect));
         } else {
             p.0.t.set(1.0);
         }
@@ -354,7 +368,7 @@ impl PopIn {
             return;
         }
         let (p, mut done) = (self.clone(), Some(done));
-        self.0.t.animate_ease(0.0, std::time::Duration::from_millis(130), crate::anim::ease_in, move || {
+        self.0.t.animate_ease(0.0, std::time::Duration::from_millis(170), crate::anim::ease_in, move || {
             p.frame(&rect);
             if p.0.t.get() == 0.0 {
                 if let Some(d) = done.take() {

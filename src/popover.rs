@@ -114,15 +114,17 @@ pub fn popover_at<S: 'static, M: Clone + 'static>(
                     if moving {
                         let full = (0, 0, w.w(), w.h());
                         let mut w2 = w.clone();
-                        if snap.record(full, || panel(&mut w2, full.3)) {
+                        // The picture is reused for a few frames (content
+                        // filling in still shows up within ~60 ms).
+                        if snap.reuse(full, 4, || panel(&mut w2, full.3)) {
                             let above = popup_y(w).is_some_and(|y| y + w.h() <= anchor_y.get());
                             let origin = (w.w() as f64 / 2.0, if above { w.h() as f64 } else { 0.0 });
                             let scale = (0.94 + 0.06 * r_, 0.88 + 0.12 * r_);
                             snap.paint(origin, scale, (0.0, 0.0), (r_ * 1.5).clamp(0.0, 1.0));
-                            snap.clear();
                             return;
                         }
                     }
+                    snap.clear();
                 } else {
                     // X11: no see-through; the unrolled part is the panel.
                     fltk::draw::set_draw_color(t.background);
@@ -209,7 +211,7 @@ pub fn popover_at<S: 'static, M: Clone + 'static>(
                 // Opened again while rolling up: unroll.
                 closing.set(false);
                 let mut w2 = win.clone();
-                reveal.animate_ease(1.0, OPEN, crate::anim::snappy, move || w2.redraw());
+                reveal.animate_ease(1.0, OPEN, crate::anim::glide, move || w2.redraw());
                 return;
             }
             if want && win.shown() {
@@ -256,15 +258,15 @@ pub fn popover_at<S: 'static, M: Clone + 'static>(
             anchor_y.set(r.1);
             show_at(&mut win, &*parent, r);
             let mut w2 = win.clone();
-            reveal.animate_ease(1.0, OPEN, crate::anim::snappy, move || w2.redraw());
+            reveal.animate_ease(1.0, OPEN, crate::anim::glide, move || w2.redraw());
         });
         result
     })
 }
 
 /// How long a popover takes to pop in and to go away.
-const OPEN: std::time::Duration = std::time::Duration::from_millis(240);
-const CLOSE: std::time::Duration = std::time::Duration::from_millis(130);
+const OPEN: std::time::Duration = std::time::Duration::from_millis(340);
+const CLOSE: std::time::Duration = std::time::Duration::from_millis(170);
 
 thread_local! {
     /// Corner radius of popovers (None: the theme's).
