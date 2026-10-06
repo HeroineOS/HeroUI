@@ -21,6 +21,7 @@ widget touched only when the value changed).
 | `dropdown(\|s\| &[T], \|s\| usize, \|usize\| M)` | `T: AsRef<str>`; static list `\|_: &S\| CONST_SLICE` or from state `\|s\| &s.names`; list is FLTK's own menu popup (as Fl_Choice), themed; native xdg_popup on Wayland; opens on press and blocks in FLTK's menu loop until a pick |
 | `slider(0.0..=100.0, \|s\| f64, \|f64\| M)` | horizontal, sends while dragging |
 | `progress(\|s\| f64)` | read-only bar, value 0.0..=1.0 |
+| `segmented(&["A", "B"], vertical, \|s\| usize, \|usize\| M)` | options side by side (or stacked); the chosen one's highlight slides to it, stretching on the way. Give it a fixed size; each option gets an equal share (tabs, a mode switch, a page list) |
 | `graph(\|s\| &[f64], max)` | filled line graph (history, oldest first); no allocation per update |
 | `canvas(\|s\| D, paint)` | custom drawing; `D: PartialEq`, redrawn only when it changes; `paint(&D, x, y, w, h, &Theme)` with `fltk::draw` |
 | `scroll(vec![..])` | vertically scrolling column (settings pages); children need `.fixed`, `.fixed_with` or a natural height (`list`); wheel + thin themed scrollbar |
@@ -64,6 +65,30 @@ that area, not the whole window. `record` returns false off Wayland (draw normal
 with a custom `draw` that draws their children must call `g.super_draw(false)`, or FLTK
 draws the children too (twice the work, and over the effect). HeroLauncher's overlay is the
 reference use (~1-2 ms per frame on a software renderer).
+
+Motion, the rules (everything in HeroUI follows them; follow them in custom widgets):
+- One frame clock (`anim`) drives every animation, at the theme's `frame_rate`; nothing
+  ticks while nothing moves. `HEROUI_SLOW=10` runs all animations 10x slower, for checking.
+- Things that follow the user (indicators, knobs, widths, selection) use springs:
+  `tween.spring_to(target, anim::Spring::SNAPPY | BOUNCY | SMOOTH | Spring { response, damping },
+  redraw)`. A new target mid-move keeps the speed (only the first call's `redraw` is kept, so
+  make it generic). `tween.velocity()` drives speed effects (the toggle knob stretches).
+  Things that appear use `animate_ease(.., anim::snappy)`, things that leave `ease_in`.
+- Moving shapes: `fx::fill_rounded(x, y, w, h, r, color, alpha)` / `fx::fill_circle` take
+  `f64`s and draw anti-aliased between pixels (Wayland), so slow motion glides instead of
+  stepping a pixel at a time.
+- Press feedback: `hover::press_amount(b)` (0..1, dips in ~70 ms, springs back ~260 ms);
+  stock buttons squeeze in by it (`widgets::press_shape`).
+- Custom-scrolled lists: `anim::Scroller` (`wheel`, `press`, `drag_to`, `release` for flicks,
+  `scroll_to` to bring something into view, `pos()` to draw at). HeroUI `scroll` areas glide
+  and flick on their own.
+- Lists of custom-drawn items: `glide::Glides<T>`: per frame `begin(widget)`, `place(key,
+  target, &item)` for each item (returns where it's drawn now and how far it has popped in),
+  `end(|item, at, fade| draw ghost)`; draw popping/fading items with
+  `fx::draw_scaled(rect, scale, alpha, || draw)`.
+- In-window panels (pickers): `fx::PopIn::attach(&mut overlay, rect, from_bottom, paint)`,
+  `pop.close(rect, done)`. Popovers pop in from their anchor's edge by themselves.
+- Pages/sections: `.transition(|s| shown)` instead of `.visible(..)`: rises and fades in.
 
 Icons in custom drawing: `heroui::icons::draw(name, x, y, size, color) -> bool` (false = not
 found, nothing drawn). Built-ins (`heroui::icons::BUILTIN`): apps, app, battery,

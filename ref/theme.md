@@ -20,6 +20,7 @@ padding = 12           # card inner margin
 font_size = 14
 font = Inter           # empty = FLTK default sans
 animations = true      # false = reduced motion / battery saving: transitions jump to the end
+frame_rate = 60        # animation frames per second (the screen's refresh rate is smoothest); only while something moves
 icon_theme = Papirus   # app icons; empty/missing = GTK's gtk-icon-theme-name, then hicolor/Adwaita
 ```
 
