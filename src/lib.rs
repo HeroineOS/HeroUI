@@ -45,6 +45,7 @@ mod color_picker;
 mod icon_picker;
 pub mod drag_scroll;
 pub mod fx;
+pub mod glide;
 mod element;
 pub mod hover;
 pub mod icons;
