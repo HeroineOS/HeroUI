@@ -51,6 +51,10 @@ Escape never closes the window; the WM close button calls `close_requested`.
 Loop: widget callbacks queue messages → `update` for each → returned tasks start → all
 bindings run once with the new state.
 
+App-wide keys: `heroui::on_key(|| -> bool)` runs on every key press before any widget
+(the focused text field included); return true to use the key up. Test
+`fltk::app::event_key()` / `event_state()` inside (HeroLauncher closes on its own shortcut).
+
 ## Task (returned from update)
 | Call | Effect |
 |---|---|

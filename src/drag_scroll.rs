@@ -24,12 +24,19 @@ const FL_PUSH: c_int = 1;
 const FL_RELEASE: c_int = 2;
 const FL_DRAG: c_int = 5;
 const FL_MOVE: c_int = 11;
+const FL_KEYDOWN: c_int = 8;
 
 thread_local! {
     static SCROLLS: RefCell<Vec<Scroll>> = const { RefCell::new(Vec::new()) };
     static GESTURE: RefCell<Option<Gesture>> = const { RefCell::new(None) };
     static INSTALLED: Cell<bool> = const { Cell::new(false) };
     static BLOCKED: Cell<bool> = const { Cell::new(false) };
+    static KEY_HOOKS: RefCell<Vec<std::rc::Rc<dyn Fn() -> bool>>> = RefCell::new(Vec::new());
+}
+
+/// See [`crate::on_key`].
+pub(crate) fn add_key_hook(f: impl Fn() -> bool + 'static) {
+    KEY_HOOKS.with(|h| h.borrow_mut().push(std::rc::Rc::new(f)));
 }
 
 struct Gesture {
@@ -84,7 +91,18 @@ fn scroll_under(x: i32, y: i32) -> Option<Scroll> {
 unsafe extern "C" fn dispatch(event: c_int, window: *mut c_void) -> c_int {
     let pass = || unsafe { fltk_sys::fl::Fl_handle_(event, window as *mut _) };
     match event {
+        FL_KEYDOWN => {
+            // Copied out: a hook may add hooks or run the event loop.
+            let hooks = KEY_HOOKS.with(|h| h.borrow().clone());
+            if hooks.iter().any(|f| f()) {
+                return 1;
+            }
+            pass()
+        }
         FL_PUSH => {
+            if crate::on_wayland() && crate::popover::press_outside(window) {
+                return 1;
+            }
             let (x, y) = pointer();
             let g = if BLOCKED.with(Cell::get) { None } else { scroll_under(x, y) };
             let g = g.map(|s| Gesture { start_pos: s.yposition(), scroll: s, start: (x, y), scrolling: false });

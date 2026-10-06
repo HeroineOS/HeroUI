@@ -519,6 +519,13 @@ pub fn is_layer() -> bool {
     LAYER.with(Cell::get)
 }
 
+/// Runs `f` for every key press before any widget sees it (the focused
+/// text field included); returning true consumes the key. For app-wide
+/// shortcuts: test `fltk::app::event_key()` / `event_state()` inside.
+pub fn on_key(f: impl Fn() -> bool + 'static) {
+    drag_scroll::add_key_hook(f);
+}
+
 /// True when FLTK is running on its Wayland backend (hybrid builds pick
 /// Wayland when available, X11 otherwise).
 pub fn on_wayland() -> bool {

@@ -263,6 +263,24 @@ thread_local! {
     static REGISTRY: std::cell::RefCell<Vec<(fltk::widget::Widget, Window)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// Wayland: a press in `window` while popovers are open. Compositors only
+/// dismiss a popup for clicks on *other* apps' surfaces, so a click
+/// elsewhere in this app (e.g. a full-screen overlay around a menu) would
+/// leave it open. Closes them unless `window` is one of them; true if it
+/// did (the click is used up, like closing a menu with a click).
+pub(crate) fn press_outside(window: *mut std::ffi::c_void) -> bool {
+    let open: Vec<Window> = REGISTRY.with(|r| {
+        r.borrow().iter().filter(|(_, w)| !w.was_deleted() && w.shown()).map(|(_, w)| w.clone()).collect()
+    });
+    if open.is_empty() || open.iter().any(|w| w.as_widget_ptr() as *mut std::ffi::c_void == window) {
+        return false;
+    }
+    for mut w in open {
+        w.hide();
+    }
+    true
+}
+
 /// Deletes the popovers whose anchor is gone (after a rebuild).
 pub(crate) fn forget_deleted() {
     REGISTRY.with(|r| {
