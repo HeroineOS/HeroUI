@@ -371,7 +371,8 @@ pub fn system_prefers_dark() -> Option<bool> {
             "busctl",
             &[
                 "--user",
-                "--timeout=1",
+                // A hung portal mustn't stall startup.
+                "--timeout=300ms",
                 "call",
                 "org.freedesktop.portal.Desktop",
                 "/org/freedesktop/portal/desktop",
@@ -382,8 +383,10 @@ pub fn system_prefers_dark() -> Option<bool> {
                 "color-scheme",
             ],
         );
-        if let Some(v) = out.and_then(|o| o.split_whitespace().last().map(str::to_owned)) {
-            match v.as_str() {
+        // No answer (no portal, or it hangs): don't wait for it again.
+        let Some(out) = out else { break };
+        if let Some(v) = out.split_whitespace().last() {
+            match v {
                 "1" => return Some(true),
                 "2" => return Some(false),
                 _ => break,
