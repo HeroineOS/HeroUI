@@ -332,6 +332,17 @@ impl Scroller {
         self.pos.spring_to(target, Spring { response: 0.22, damping: 1.0 }, redraw);
     }
 
+    /// Glides to `pos` (within 0..=`max`): bringing something into view.
+    pub fn scroll_to(&self, pos: f64, max: f64, redraw: impl FnMut() + 'static) {
+        self.flick.set(self.flick.get().wrapping_add(1));
+        self.pos.spring_to(pos.clamp(0.0, max.max(0.0)), Spring { response: 0.26, damping: 1.0 }, redraw);
+    }
+
+    /// Where it's heading (its position when still).
+    pub fn target(&self) -> f64 {
+        self.pos.target()
+    }
+
     /// A finger or button went down: stops any motion.
     pub fn press(&self) {
         self.set(self.pos.get());
