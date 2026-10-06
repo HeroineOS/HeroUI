@@ -993,7 +993,7 @@ pub fn segmented<S: 'static, M: 'static>(
             }
             let mut w2 = w.clone();
             head.spring_to(i, crate::anim::Spring { response: 0.22, damping: 0.8 }, move || w.redraw());
-            tail.spring_to(i, crate::anim::Spring { response: 0.34, damping: 0.92 }, move || w2.redraw());
+            tail.spring_to(i, crate::anim::Spring { response: 0.29, damping: 0.9 }, move || w2.redraw());
         });
         f.as_base_widget()
     })
