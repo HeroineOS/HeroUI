@@ -158,19 +158,35 @@ fn open(anchor: &Button, start: Color, on_pick: Rc<dyn Fn(Color)>) {
     win.end();
     crate::drag_scroll::set_blocked(true);
 
+    // Pops in now, and out when closed (see fx::PopIn).
+    // Where the panel is (it can be dragged).
+    let rect = {
+        let state = state.clone();
+        move || {
+            let s = state.borrow();
+            (s.px, s.py, PANEL_W, PANEL_H)
+        }
+    };
+    let pop = crate::fx::PopIn::attach(&mut overlay, rect.clone(), py < anchor.y(), {
+        let state = state.clone();
+        move |_| paint(&mut state.borrow_mut())
+    });
     let close = {
-        let overlay = overlay.clone();
+        let (overlay, pop, rect) = (overlay.clone(), pop.clone(), rect.clone());
         move || {
             if overlay.was_deleted() {
                 return;
             }
             crate::drag_scroll::set_blocked(false);
-            let mut o = overlay.clone();
-            if let Some(mut win) = o.parent() {
-                win.redraw();
-            }
-            o.hide();
-            fltk::app::delete_widget(o);
+            let overlay = overlay.clone();
+            pop.close(rect.clone(), move || {
+                let mut o = overlay.clone();
+                if let Some(mut win) = o.parent() {
+                    win.redraw();
+                }
+                o.hide();
+                fltk::app::delete_widget(o);
+            });
         }
     };
     done.set_callback({
@@ -194,12 +210,6 @@ fn open(anchor: &Button, start: Color, on_pick: Rc<dyn Fn(Color)>) {
         }
     });
 
-    overlay.draw({
-        let state = state.clone();
-        move |_| paint(&mut state.borrow_mut())
-    });
-    // The panel is painted first, the field and button on top.
-    overlay.super_draw_first(false);
     // This handler decides first; unhandled events go to the children.
     overlay.super_handle_first(false);
     overlay.handle({

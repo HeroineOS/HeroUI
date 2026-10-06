@@ -83,7 +83,8 @@ struct Picker {
     kind: Option<usize>,
     /// Indexes into the library that match.
     shown: Vec<usize>,
-    scroll: i32,
+    /// The grid's scroll position (glides, flicks).
+    scroll: crate::anim::Scroller,
     hover: Option<usize>,
     /// Touch scrolling: the last pointer y.
     /// A press on the grid: (last y, scrolled since the press).
@@ -95,7 +96,7 @@ impl Picker {
         let lib = icons::library();
         let q = self.query.trim().to_lowercase();
         self.shown = (0..lib.len()).filter(|&i| self.kind.is_none_or(|k| lib[i].1 == k) && (q.is_empty() || lib[i].0.to_lowercase().contains(&q))).collect();
-        self.scroll = 0;
+        self.scroll.set(0.0);
         self.hover = None;
     }
     fn chips_y(&self) -> i32 {
@@ -129,7 +130,7 @@ impl Picker {
         let (gx, gy, gw, _) = self.grid();
         let cols = self.cols();
         let x0 = gx + (gw - cols * CELL) / 2;
-        (x0 + (i as i32 % cols) * CELL, gy + (i as i32 / cols) * CELL - self.scroll, CELL, CELL)
+        (x0 + (i as i32 % cols) * CELL, gy + (i as i32 / cols) * CELL - self.scroll.pos(), CELL, CELL)
     }
     fn content_h(&self) -> i32 {
         (self.shown.len() as i32 + self.cols() - 1) / self.cols() * CELL
@@ -148,7 +149,10 @@ impl Picker {
     }
 
     fn scroll_by(&mut self, dy: i32) {
-        self.scroll = (self.scroll + dy).clamp(0, (self.content_h() - self.grid().3).max(0));
+        self.scroll.set((self.scroll.pos() + dy).clamp(0, self.max_scroll()) as f64);
+    }
+    fn max_scroll(&self) -> i32 {
+        (self.content_h() - self.grid().3).max(0)
     }
     fn at(&self, ex: i32, ey: i32) -> Option<usize> {
         let (gx, gy, gw, gh) = self.grid();
@@ -178,7 +182,7 @@ fn open(anchor: &Button, current: String, on_pick: Rc<dyn Fn(String)>) {
         query: String::new(),
         kind: None,
         shown: vec![],
-        scroll: 0,
+        scroll: Default::default(),
         hover: None,
         drag_y: None,
     }));
@@ -215,19 +219,27 @@ fn open(anchor: &Button, current: String, on_pick: Rc<dyn Fn(String)>) {
     win.end();
     crate::drag_scroll::set_blocked(true);
 
+    // Pops in now, and out when closed (see fx::PopIn).
+    let pop = crate::fx::PopIn::attach(&mut overlay, move || (px, py, pw, ph), py < anchor.y(), {
+        let st = st.clone();
+        move |_| paint(&st.borrow())
+    });
     let close = {
-        let overlay = overlay.clone();
+        let (overlay, pop) = (overlay.clone(), pop.clone());
         move || {
             if overlay.was_deleted() {
                 return;
             }
             crate::drag_scroll::set_blocked(false);
-            let mut o = overlay.clone();
-            if let Some(mut win) = o.parent() {
-                win.redraw();
-            }
-            o.hide();
-            fltk::app::delete_widget(o);
+            let overlay = overlay.clone();
+            pop.close(move || (px, py, pw, ph), move || {
+                let mut o = overlay.clone();
+                if let Some(mut win) = o.parent() {
+                    win.redraw();
+                }
+                o.hide();
+                fltk::app::delete_widget(o);
+            });
         }
     };
     none.set_callback({
@@ -248,11 +260,6 @@ fn open(anchor: &Button, current: String, on_pick: Rc<dyn Fn(String)>) {
             overlay.redraw();
         }
     });
-    overlay.draw({
-        let st = st.clone();
-        move |_| paint(&st.borrow())
-    });
-    overlay.super_draw_first(false);
     overlay.super_handle_first(false);
     overlay.handle({
         let close = close.clone();
@@ -278,12 +285,14 @@ fn open(anchor: &Button, current: String, on_pick: Rc<dyn Fn(String)>) {
                         return true;
                     }
                     s.drag_y = Some((ey, false));
+                    s.scroll.press();
                     true
                 }
                 Event::Drag => {
                     if let Some((y0, moved)) = s.drag_y {
                         if moved || (ey - y0).abs() > 4 {
-                            s.scroll_by(y0 - ey);
+                            let max = s.max_scroll() as f64;
+                            s.scroll.drag_to((s.scroll.pos() + y0 - ey) as f64, max);
                             s.drag_y = Some((ey, true));
                             s.hover = None;
                             o.redraw();
@@ -293,6 +302,10 @@ fn open(anchor: &Button, current: String, on_pick: Rc<dyn Fn(String)>) {
                 }
                 Event::Released => {
                     let Some((_, moved)) = s.drag_y.take() else { return false };
+                    if moved {
+                        let mut o2 = o.clone();
+                        s.scroll.release(s.max_scroll() as f64, move || o2.redraw());
+                    }
                     // A tap (not a scroll) on an icon picks it.
                     if !moved {
                         if let Some(i) = s.at(ex, ey) {
@@ -310,8 +323,8 @@ fn open(anchor: &Button, current: String, on_pick: Rc<dyn Fn(String)>) {
                         fltk::app::MouseWheel::Up => -CELL * 2,
                         _ => 0,
                     };
-                    s.scroll_by(dy);
-                    o.redraw();
+                    let mut o2 = o.clone();
+                    s.scroll.wheel(dy as f64, s.max_scroll() as f64, move || o2.redraw());
                     true
                 }
                 Event::Enter | Event::Move => {

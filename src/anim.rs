@@ -1,23 +1,80 @@
-//! Short, cheap animations. A running animation repaints only the widget
-//! it belongs to, at most ~60 times a second, and only while it runs:
-//! nothing ticks when nothing moves. With the theme's `animations = false`
-//! (reduced motion, battery saving) every animation jumps to its end.
+//! Short, cheap animations. One frame clock drives every running
+//! animation of the app, so all of them step together, once per frame
+//! (at the theme's `frame_rate`), and a frame repaints only the widgets
+//! that move. Nothing ticks when nothing moves. With the theme's
+//! `animations = false` (reduced motion, battery saving) every animation
+//! jumps to its end.
+//!
+//! Two kinds of motion: timed curves ([`animate_with`], [`Tween::animate_to`])
+//! for things that appear and leave, and springs ([`Tween::spring_to`]) for
+//! things that follow the user: a spring keeps its speed when it gets a
+//! new target mid-move, so fast changes flow instead of restarting.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::time::{Duration, Instant};
 
 thread_local! {
     static ENABLED: Cell<bool> = const { Cell::new(true) };
+    static FRAME_RATE: Cell<u32> = const { Cell::new(60) };
+    /// Running animations: each is called once per frame with the frame's
+    /// time and returns whether it continues.
+    static JOBS: RefCell<Vec<Job>> = const { RefCell::new(Vec::new()) };
+    static TICKING: Cell<bool> = const { Cell::new(false) };
 }
+
+type Job = Box<dyn FnMut(Instant) -> bool>;
 
 /// Set from the theme by [`crate::Theme::apply`].
 pub(crate) fn set_enabled(on: bool) {
     ENABLED.with(|e| e.set(on));
 }
 
+/// Set from the theme by [`crate::Theme::apply`].
+pub(crate) fn set_frame_rate(fps: i32) {
+    FRAME_RATE.with(|f| f.set(fps.clamp(24, 360) as u32));
+}
+
 /// Whether animations are on (the theme's `animations` key).
 pub fn enabled() -> bool {
     ENABLED.with(|e| e.get())
+}
+
+/// Slow motion for checking animations: `HEROUI_SLOW=10` runs them all
+/// ten times slower.
+fn slow() -> f64 {
+    thread_local!(static SLOW: f64 = std::env::var("HEROUI_SLOW").ok().and_then(|v| v.parse().ok()).filter(|v: &f64| *v >= 1.0).unwrap_or(1.0));
+    SLOW.with(|s| *s)
+}
+
+fn frame_interval() -> f64 {
+    1.0 / FRAME_RATE.with(Cell::get) as f64
+}
+
+/// Adds `job` to the frame clock (starting it if it's idle). The job runs
+/// from the next frame on until it returns false.
+fn schedule(job: Job) {
+    JOBS.with(|j| j.borrow_mut().push(job));
+    if !TICKING.with(|t| t.replace(true)) {
+        fltk::app::add_timeout3(frame_interval(), tick);
+    }
+}
+
+fn tick(handle: fltk::app::TimeoutHandle) {
+    let now = Instant::now();
+    // Taken out while they run: a job may start other animations.
+    let mut jobs = JOBS.with(|j| std::mem::take(&mut *j.borrow_mut()));
+    jobs.retain_mut(|job| job(now));
+    let more = JOBS.with(|j| {
+        let mut j = j.borrow_mut();
+        jobs.append(&mut j);
+        *j = jobs;
+        !j.is_empty()
+    });
+    if more {
+        fltk::app::repeat_timeout3(frame_interval(), handle);
+    } else {
+        TICKING.with(|t| t.set(false));
+    }
 }
 
 /// Default length of UI transitions.
@@ -39,30 +96,93 @@ pub fn animate_with(duration: Duration, ease: fn(f64) -> f64, mut frame: impl Fn
     }
     let start = Instant::now();
     frame(0.0);
-    fltk::app::add_timeout3(1.0 / 60.0, move |handle| {
-        let t = (start.elapsed().as_secs_f64() / duration.as_secs_f64()).min(1.0);
-        frame(ease(t));
-        if t < 1.0 {
-            fltk::app::repeat_timeout3(1.0 / 60.0, handle);
+    schedule(Box::new(move |now| {
+        let t = (now.duration_since(start).as_secs_f64() / (duration.as_secs_f64() * slow())).min(1.0);
+        frame(if t >= 1.0 { 1.0 } else { ease(t) });
+        t < 1.0
+    }));
+}
+
+/// Calls `frame(seconds since the last frame)` on every frame for as long
+/// as it returns true: for motion computed step by step (momentum
+/// scrolling). With animations off it isn't called.
+pub fn each_frame(mut frame: impl FnMut(f64) -> bool + 'static) {
+    if !enabled() {
+        return;
+    }
+    let mut last = Instant::now();
+    schedule(Box::new(move |now| {
+        let dt = now.duration_since(last).as_secs_f64().min(0.1) / slow();
+        last = now;
+        frame(dt)
+    }));
+}
+
+/// How a spring moves: `response` is roughly how long a move takes (in
+/// seconds), `damping` 1.0 arrives without overshooting, lower bounces.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Spring {
+    pub response: f64,
+    pub damping: f64,
+}
+
+impl Spring {
+    /// Quick and settled, the default for things following the user
+    /// (indicators, knobs, widths).
+    pub const SNAPPY: Spring = Spring { response: 0.28, damping: 0.86 };
+    /// A visible bounce (things popping in).
+    pub const BOUNCY: Spring = Spring { response: 0.38, damping: 0.62 };
+    /// Slow and soft, no overshoot (large areas, scrolling).
+    pub const SMOOTH: Spring = Spring { response: 0.32, damping: 1.0 };
+
+    /// Stiffness and damping for a unit mass.
+    fn constants(self) -> (f64, f64) {
+        let w = 2.0 * std::f64::consts::PI / self.response.max(0.01);
+        (w * w, 2.0 * self.damping * w)
+    }
+
+    /// One step of `dt` seconds from (position, velocity) toward `target`
+    /// (semi-implicit Euler in small sub-steps: stable at any frame rate).
+    pub fn step(self, (mut x, mut v): (f64, f64), target: f64, dt: f64) -> (f64, f64) {
+        let (k, c) = self.constants();
+        let n = (dt / (1.0 / 240.0)).ceil().max(1.0);
+        let h = dt / n;
+        for _ in 0..n as u32 {
+            v += (-k * (x - target) - c * v) * h;
+            x += v * h;
         }
-    });
+        (x, v)
+    }
 }
 
 /// A value that moves smoothly to new targets: what a widget draws (a
 /// knob position, a bar's fill) while its state changes. Starting a new
-/// move cancels the running one, so quick changes never fight.
+/// timed move cancels the running one; a new spring target keeps the
+/// current speed.
 #[derive(Clone)]
 pub struct Tween(std::rc::Rc<TweenInner>);
 
 struct TweenInner {
     value: Cell<f64>,
+    /// Units per second, kept up to date by every kind of move.
+    velocity: Cell<f64>,
     /// Bumped by every move; stale animation frames see a different one.
     generation: Cell<u32>,
+    /// While a spring runs: its target and kind (a new target joins it).
+    spring: Cell<Option<(f64, Spring)>>,
+    /// The size of the move, for deciding when a spring has come to rest.
+    span: Cell<f64>,
 }
 
 impl Tween {
     pub fn new(value: f64) -> Tween {
-        Tween(std::rc::Rc::new(TweenInner { value: Cell::new(value), generation: Cell::new(0) }))
+        Tween(std::rc::Rc::new(TweenInner {
+            value: Cell::new(value),
+            velocity: Cell::new(0.0),
+            generation: Cell::new(0),
+            spring: Cell::new(None),
+            span: Cell::new(0.0),
+        }))
     }
 
     /// The value to draw now.
@@ -70,10 +190,23 @@ impl Tween {
         self.0.value.get()
     }
 
+    /// How fast it's moving (units per second; 0 at rest). For effects
+    /// that follow speed (a knob stretching as it slides).
+    pub fn velocity(&self) -> f64 {
+        self.0.velocity.get()
+    }
+
+    /// Where it's going (the value itself when at rest or timed).
+    pub fn target(&self) -> f64 {
+        self.0.spring.get().map_or(self.get(), |(t, _)| t)
+    }
+
     /// Jumps to `value`, cancelling any running move.
     pub fn set(&self, value: f64) {
         self.0.generation.set(self.0.generation.get().wrapping_add(1));
+        self.0.spring.set(None);
         self.0.value.set(value);
+        self.0.velocity.set(0.0);
     }
 
     /// Moves from the current value to `target` over `duration`, calling
@@ -98,12 +231,152 @@ impl Tween {
     fn move_to(&self, target: f64, duration: Duration, ease: fn(f64) -> f64, mut redraw: impl FnMut() + 'static) {
         let generation = self.0.generation.get().wrapping_add(1);
         self.0.generation.set(generation);
+        self.0.spring.set(None);
         let (from, me) = (self.get(), self.clone());
+        let mut last = (Instant::now(), from);
         animate_with(duration, ease, move |t| {
             if me.0.generation.get() == generation {
-                me.0.value.set(from + (target - from) * t);
+                let v = from + (target - from) * t;
+                let now = Instant::now();
+                let dt = now.duration_since(last.0).as_secs_f64();
+                me.0.velocity.set(if t >= 1.0 { 0.0 } else if dt > 0.0 { (v - last.1) / dt } else { me.0.velocity.get() });
+                last = (now, v);
+                me.0.value.set(v);
                 redraw();
             }
+        });
+    }
+
+    /// Springs toward `target`, calling `redraw` on every frame. Called
+    /// again while it moves, it only changes the target (and spring): the
+    /// motion carries its speed into the new direction.
+    pub fn spring_to(&self, target: f64, spring: Spring, mut redraw: impl FnMut() + 'static) {
+        if !enabled() {
+            self.set(target);
+            redraw();
+            return;
+        }
+        let span = (target - self.get()).abs();
+        if self.0.spring.replace(Some((target, spring))).is_some() {
+            // Joined the running spring.
+            self.0.span.set(self.0.span.get().max(span));
+            return;
+        }
+        if span == 0.0 && self.velocity() == 0.0 {
+            self.0.spring.set(None);
+            return;
+        }
+        self.0.span.set(span);
+        let generation = self.0.generation.get().wrapping_add(1);
+        self.0.generation.set(generation);
+        let me = self.clone();
+        each_frame(move |dt| {
+            if me.0.generation.get() != generation {
+                return false;
+            }
+            let Some((target, spring)) = me.0.spring.get() else { return false };
+            let (x, v) = spring.step((me.get(), me.velocity()), target, dt);
+            // At rest: within a thousandth of the move, barely moving.
+            let eps = (me.0.span.get() * 0.001).max(1e-4);
+            let rest = (x - target).abs() < eps && v.abs() < eps * 10.0;
+            me.0.value.set(if rest { target } else { x });
+            me.0.velocity.set(if rest { 0.0 } else { v });
+            if rest {
+                me.0.spring.set(None);
+            }
+            redraw();
+            !rest
+        });
+    }
+}
+
+/// Smooth scrolling for widgets that scroll their own drawing (custom
+/// lists and grids): wheel steps glide (and add up while gliding), and a
+/// drag released while moving keeps going, slowing like a sliding sheet.
+/// The widget draws at [`Scroller::pos`] and calls `redraw` when told.
+#[derive(Clone)]
+pub struct Scroller {
+    pos: Tween,
+    /// Recent drag positions (time, content position).
+    trail: std::rc::Rc<RefCell<Vec<(Instant, f64)>>>,
+    /// Bumped to stop a flick.
+    flick: std::rc::Rc<Cell<u32>>,
+}
+
+impl Default for Scroller {
+    fn default() -> Self {
+        Scroller::new(0.0)
+    }
+}
+
+impl Scroller {
+    pub fn new(pos: f64) -> Scroller {
+        Scroller { pos: Tween::new(pos), trail: Default::default(), flick: Default::default() }
+    }
+
+    /// Where the content is scrolled to now (whole pixels).
+    pub fn pos(&self) -> i32 {
+        self.pos.get().round() as i32
+    }
+
+    /// Jumps there (content changed, scrolled into view), stopping motion.
+    pub fn set(&self, pos: f64) {
+        self.flick.set(self.flick.get().wrapping_add(1));
+        self.pos.set(pos);
+    }
+
+    /// A wheel step of `delta` pixels, kept within 0..=`max`.
+    pub fn wheel(&self, delta: f64, max: f64, redraw: impl FnMut() + 'static) {
+        self.flick.set(self.flick.get().wrapping_add(1));
+        let target = (self.pos.target() + delta).clamp(0.0, max.max(0.0));
+        self.pos.spring_to(target, Spring { response: 0.22, damping: 1.0 }, redraw);
+    }
+
+    /// A finger or button went down: stops any motion.
+    pub fn press(&self) {
+        self.set(self.pos.get());
+        self.trail.borrow_mut().clear();
+    }
+
+    /// Dragging: the content follows to `pos` (within 0..=`max`).
+    pub fn drag_to(&self, pos: f64, max: f64) {
+        let pos = pos.clamp(0.0, max.max(0.0));
+        self.pos.set(pos);
+        let mut t = self.trail.borrow_mut();
+        t.push((Instant::now(), pos));
+        if t.len() > 6 {
+            t.remove(0);
+        }
+    }
+
+    /// The drag ended: keeps the last ~100 ms' speed, slowing down to a
+    /// stop (or an end), repainting with `redraw`.
+    pub fn release(&self, max: f64, mut redraw: impl FnMut() + 'static) {
+        let now = Instant::now();
+        let t = std::mem::take(&mut *self.trail.borrow_mut());
+        let recent: Vec<_> = t.iter().filter(|(at, _)| now.duration_since(*at).as_secs_f64() < 0.1).collect();
+        let (Some(a), Some(b)) = (recent.first(), recent.last()) else { return };
+        let dt = b.0.duration_since(a.0).as_secs_f64();
+        if dt < 0.01 {
+            return;
+        }
+        let mut speed = (b.1 - a.1) / dt;
+        if speed.abs() < 120.0 {
+            return;
+        }
+        let generation = self.flick.get().wrapping_add(1);
+        self.flick.set(generation);
+        let me = self.clone();
+        each_frame(move |dt| {
+            if me.flick.get() != generation {
+                return false;
+            }
+            // Friction: loses ~95% of its speed per second.
+            let pos = (me.pos.get() + speed * dt).clamp(0.0, max.max(0.0));
+            speed *= (-3.0 * dt).exp();
+            me.pos.0.value.set(pos);
+            redraw();
+            !(pos <= 0.0 || pos >= max || speed.abs() < 20.0)
         });
     }
 }
@@ -116,6 +389,12 @@ pub fn linear(t: f64) -> f64 {
 /// Cubic ease-out: fast start, gentle stop.
 pub fn ease_out(t: f64) -> f64 {
     1.0 - (1.0 - t).powi(3)
+}
+
+/// Quintic ease-out: a fast start and a long soft landing (fades, things
+/// gliding into place).
+pub fn ease_out_quint(t: f64) -> f64 {
+    1.0 - (1.0 - t).powi(5)
 }
 
 /// Quadratic ease-in: slow start, fast end (things leaving).
@@ -161,6 +440,7 @@ mod tests {
         assert!(snappy(0.0).abs() < 1e-4 && (snappy(1.0) - 1.0).abs() < 1e-4);
         assert!(snappy(0.3) > 0.5 && snappy(0.06) < 0.3 && (1..100).any(|i| snappy(i as f64 / 100.0) > 1.0));
         assert_eq!(ease_in(1.0), 1.0);
+        assert_eq!(ease_out_quint(1.0), 1.0);
     }
 
     #[test]
@@ -169,6 +449,8 @@ mod tests {
         let t = Tween::new(0.0);
         t.animate_to(1.0, SHORT, || {});
         assert_eq!(t.get(), 1.0);
+        t.spring_to(3.0, Spring::SNAPPY, || {});
+        assert_eq!(t.get(), 3.0);
         t.set(0.25);
         assert_eq!(t.get(), 0.25);
         set_enabled(true);
@@ -182,5 +464,24 @@ mod tests {
         animate(SHORT, move |t| s.borrow_mut().push(t));
         assert_eq!(*seen.borrow(), [1.0]);
         set_enabled(true);
+    }
+
+    /// Springs settle on the target in about their response time, a
+    /// bouncy one overshooting first, a damped one not; at any frame rate.
+    #[test]
+    fn springs_settle() {
+        for fps in [30.0, 60.0, 144.0] {
+            for (s, bounces) in [(Spring::SNAPPY, false), (Spring::BOUNCY, true), (Spring::SMOOTH, false)] {
+                let (mut x, mut v, mut max) = (0.0, 0.0, 0.0f64);
+                let mut t = 0.0;
+                while t < 1.5 {
+                    (x, v) = s.step((x, v), 100.0, 1.0 / fps);
+                    max = max.max(x);
+                    t += 1.0 / fps;
+                }
+                assert!((x - 100.0).abs() < 0.5 && v.abs() < 5.0, "{s:?} at {fps}: {x} {v}");
+                assert_eq!(max > 101.0, bounces, "{s:?} at {fps}: max {max}");
+            }
+        }
     }
 }

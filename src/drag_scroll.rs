@@ -25,6 +25,7 @@ const FL_RELEASE: c_int = 2;
 const FL_DRAG: c_int = 5;
 const FL_MOVE: c_int = 11;
 const FL_KEYDOWN: c_int = 8;
+const FL_MOUSEWHEEL: c_int = 19;
 
 thread_local! {
     static SCROLLS: RefCell<Vec<Scroll>> = const { RefCell::new(Vec::new()) };
@@ -44,6 +45,88 @@ struct Gesture {
     start: (i32, i32),
     start_pos: i32,
     scrolling: bool,
+    /// Recent finger positions (time, y) for the flick speed.
+    trail: Vec<(std::time::Instant, i32)>,
+}
+
+thread_local! {
+    /// Each scroll area's smooth position while a wheel glide or a flick
+    /// runs (FLTK's own position is whole pixels).
+    static GLIDES: RefCell<Vec<(Scroll, crate::anim::Tween)>> = const { RefCell::new(Vec::new()) };
+    /// Bumped by each press: a running flick stops when the finger lands.
+    static FLICK: Cell<u32> = const { Cell::new(0) };
+}
+
+/// The glide position of `s` (created at its current position).
+fn glide(s: &Scroll) -> crate::anim::Tween {
+    GLIDES.with(|g| {
+        let mut g = g.borrow_mut();
+        g.retain(|(s, _)| !s.was_deleted());
+        if let Some((_, t)) = g.iter().find(|(o, _)| o.as_widget_ptr() == s.as_widget_ptr()) {
+            return t.clone();
+        }
+        let t = crate::anim::Tween::new(s.yposition() as f64);
+        g.push((s.clone(), t.clone()));
+        t
+    })
+}
+
+fn max_pos(s: &Scroll) -> i32 {
+    (content_height(s) - s.h()).max(0)
+}
+
+/// Wheel: FLTK's scroll jumps a step; this turns the jump into a glide
+/// toward the same place (further notches extend the glide, keeping its
+/// speed).
+fn wheel_glide(s: &mut Scroll, before: i32) {
+    let after = s.yposition();
+    if after == before || !crate::anim::enabled() {
+        return;
+    }
+    let t = glide(s);
+    // From where it's drawn now, to where it was going plus this step.
+    let base = if t.target() != t.get() { t.target() } else { before as f64 };
+    if t.target() == t.get() {
+        t.set(before as f64);
+    }
+    let target = (base + (after - before) as f64).clamp(0.0, max_pos(s) as f64);
+    s.scroll_to(s.xposition(), t.get().round() as i32);
+    let mut s2 = s.clone();
+    t.spring_to(target, crate::anim::Spring { response: 0.22, damping: 1.0 }, move || {
+        if let Some((_, t)) = GLIDES.with(|g| g.borrow().iter().find(|(o, _)| o.as_widget_ptr() == s2.as_widget_ptr()).cloned()) {
+            let y = t.get().round() as i32;
+            if !s2.was_deleted() && y != s2.yposition() {
+                s2.scroll_to(s2.xposition(), y);
+            }
+        }
+    });
+}
+
+/// After a drag: keeps scrolling at the finger's speed, slowing down like
+/// a sliding sheet, until it stops, hits an end, or a finger lands.
+fn flick(s: Scroll, mut speed: f64) {
+    if speed.abs() < 120.0 || !crate::anim::enabled() {
+        return;
+    }
+    let generation = FLICK.with(Cell::get);
+    let mut pos = s.yposition() as f64;
+    let mut s = s;
+    crate::anim::each_frame(move |dt| {
+        if s.was_deleted() || FLICK.with(Cell::get) != generation {
+            return false;
+        }
+        pos += speed * dt;
+        // Friction: loses ~95% of its speed per second.
+        speed *= (-3.0 * dt).exp();
+        let max = max_pos(&s) as f64;
+        let stop = pos <= 0.0 || pos >= max || speed.abs() < 20.0;
+        pos = pos.clamp(0.0, max);
+        let y = pos.round() as i32;
+        if y != s.yposition() {
+            s.scroll_to(s.xposition(), y);
+        }
+        !stop
+    });
 }
 
 /// Called by `scroll` for every scroll area it builds.
@@ -104,8 +187,11 @@ unsafe extern "C" fn dispatch(event: c_int, window: *mut c_void) -> c_int {
                 return 1;
             }
             let (x, y) = pointer();
+            // A landing finger stops a flick or glide.
+            FLICK.with(|f| f.set(f.get().wrapping_add(1)));
+            GLIDES.with(|g| g.borrow().iter().for_each(|(s, t)| t.set(s.yposition() as f64)));
             let g = if BLOCKED.with(Cell::get) { None } else { scroll_under(x, y) };
-            let g = g.map(|s| Gesture { start_pos: s.yposition(), scroll: s, start: (x, y), scrolling: false });
+            let g = g.map(|s| Gesture { start_pos: s.yposition(), scroll: s, start: (x, y), scrolling: false, trail: Vec::new() });
             GESTURE.with(|gs| *gs.borrow_mut() = g);
             pass()
         }
@@ -124,8 +210,11 @@ unsafe extern "C" fn dispatch(event: c_int, window: *mut c_void) -> c_int {
                     g.scrolling = true;
                     cancel_press();
                 }
-                let content = content_height(&g.scroll);
-                let max = (content - g.scroll.h()).max(0);
+                g.trail.push((std::time::Instant::now(), y));
+                if g.trail.len() > 6 {
+                    g.trail.remove(0);
+                }
+                let max = max_pos(&g.scroll);
                 let pos = (g.start_pos - dy).clamp(0, max);
                 if pos != g.scroll.yposition() {
                     g.scroll.scroll_to(g.scroll.xposition(), pos);
@@ -142,8 +231,30 @@ unsafe extern "C" fn dispatch(event: c_int, window: *mut c_void) -> c_int {
             // If a scroll happened, the pressed widget was un-pressed when it
             // began, so this release doesn't click it; FLTK still gets it to
             // clear its own state.
-            GESTURE.with(|gs| gs.borrow_mut().take());
+            if let Some(g) = GESTURE.with(|gs| gs.borrow_mut().take()) {
+                // The finger's speed over its last ~100 ms carries on.
+                let now = std::time::Instant::now();
+                let recent: Vec<_> = g.trail.iter().filter(|(t, _)| now.duration_since(*t).as_secs_f64() < 0.1).collect();
+                if let (true, Some(a), Some(b)) = (g.scrolling, recent.first(), recent.last()) {
+                    let dt = b.0.duration_since(a.0).as_secs_f64();
+                    if dt > 0.01 {
+                        flick(g.scroll.clone(), -((b.1 - a.1) as f64) / dt);
+                    }
+                }
+            }
             pass()
+        }
+        FL_MOUSEWHEEL => {
+            let (x, y) = pointer();
+            match scroll_under(x, y) {
+                Some(mut s) => {
+                    let before = s.yposition();
+                    let r = pass();
+                    wheel_glide(&mut s, before);
+                    r
+                }
+                None => pass(),
+            }
         }
         _ => pass(),
     }

@@ -30,7 +30,7 @@ pub use crate::popover::set_radius as set_popover_radius;
 pub use crate::popover::offset as popover_offset;
 pub use crate::popover::dragged_out as popover_dragged_out;
 use crate::element::{relayout_parent, Ctx, Element};
-use crate::hover::hover_amount;
+use crate::hover::{hover_amount, press_amount};
 use crate::theme::{Theme, ROUNDED};
 
 fn text_frame<S: 'static, M: 'static>(ctx: &Ctx<S, M>, size_delta: i32, dim: bool, bold: bool) -> Frame {
@@ -244,6 +244,13 @@ pub fn custom_button(draw: impl FnMut(&mut Button) + 'static) -> Button {
     b
 }
 
+/// A button's rounded background, squeezed in a little (up to 1.5 px a
+/// side, between pixels) by the press amount `p`: the press feedback.
+pub fn press_shape(b: &Button, color: Color, radius: i32, p: f32) {
+    let i = 1.5 * p as f64;
+    crate::fx::fill_rounded(b.x() as f64 + i, b.y() as f64 + i, b.w() as f64 - 2.0 * i, b.h() as f64 - 2.0 * i, radius as f64 - i, color, 1.0);
+}
+
 fn make_button<S: 'static, M: Clone + 'static>(
     label: &str,
     msg: M,
@@ -254,16 +261,14 @@ fn make_button<S: 'static, M: Clone + 'static>(
         let mut b = custom_button(move |b| {
             let t = crate::theme::current();
             let (bg, fg) = if primary { (t.accent, t.accent_text) } else { (t.surface_alt, t.text) };
+            let p = press_amount(b);
             let bg = if !b.active_r() {
                 mix(bg, t.background, 0.6)
-            } else if b.value() {
-                mix(bg, t.background, 0.25)
             } else {
-                mix(bg, Color::White, 0.1 * hover_amount(b))
+                mix(mix(bg, Color::White, 0.1 * hover_amount(b)), t.background, 0.22 * p)
             };
             let fg = if b.active_r() { fg } else { mix(fg, t.background, 0.5) };
-            draw::set_draw_color(bg);
-            draw::draw_rounded_rectf(b.x(), b.y(), b.w(), b.h(), t.radius.min(b.h() / 2));
+            press_shape(b, bg, t.radius.min(b.h() / 2), p);
             draw::set_draw_color(fg);
             draw::set_font(t.font(), t.font_size);
             draw::draw_text2(&label, b.x(), b.y(), b.w(), b.h(), Align::Center);
@@ -335,15 +340,18 @@ pub fn toggle<S: 'static, M: 'static>(
                 draw::draw_text2(&label, b.x(), b.y(), b.w() - 48, b.h(), Align::Left);
                 let (tw, th) = (40, 22);
                 let (tx, ty) = (b.x() + b.w() - tw, b.y() + (b.h() - th) / 2);
-                let track = mix(t.surface_alt, t.accent, p as f32);
+                let pc = p.clamp(0.0, 1.0) as f32;
+                let track = mix(t.surface_alt, t.accent, pc);
                 let track = mix(track, Color::White, 0.1 * hover_amount(b));
                 let track = if b.active_r() { track } else { mix(track, t.background, 0.6) };
-                draw::set_draw_color(track);
-                draw::draw_rounded_rectf(tx, ty, tw, th, th / 2);
-                let knob = th - 6;
-                let kx = tx + 3 + ((tw - knob - 6) as f64 * p).round() as i32;
-                draw::set_draw_color(mix(t.text_dim, t.accent_text, p as f32));
-                draw::draw_pie(kx, ty + 3, knob, knob, 0.0, 360.0);
+                crate::fx::fill_rounded(tx as f64, ty as f64, tw as f64, th as f64, th as f64 / 2.0, track, 1.0);
+                // The knob springs across; it stretches with its speed and
+                // while pressed (like a finger squashing it), between pixels.
+                let knob = (th - 6) as f64;
+                let travel = (tw - 6) as f64 - knob;
+                let stretch = (pos.velocity().abs() * travel * 0.012).min(7.0) + 4.0 * press_amount(b) as f64;
+                let kx = tx as f64 + 3.0 + travel * p - stretch * p.clamp(0.0, 1.0);
+                crate::fx::fill_rounded(kx, ty as f64 + 3.0, knob + stretch, knob, knob / 2.0, mix(t.text_dim, t.accent_text, pc), 1.0);
             }
         });
         let emit = ctx.emitter();
@@ -367,7 +375,7 @@ pub fn toggle<S: 'static, M: 'static>(
                 w.redraw();
                 return;
             }
-            pos.animate_to(to, crate::anim::SHORT, move || w.redraw());
+            pos.spring_to(to, crate::anim::Spring::SNAPPY, move || w.redraw());
         });
         b.as_base_widget()
     })
@@ -618,10 +626,10 @@ pub fn progress<S: 'static, M: 'static>(value: impl Fn(&S) -> f64 + 'static) -> 
                 let y = f.y() + (f.h() - h) / 2;
                 draw::set_draw_color(t.surface_alt);
                 draw::draw_rounded_rectf(f.x(), y, f.w(), h, h / 2);
-                let w = (f.w() as f64 * frac.get()) as i32;
-                if w > 0 {
-                    draw::set_draw_color(t.accent);
-                    draw::draw_rounded_rectf(f.x(), y, w.max(h), h, h / 2);
+                // Between pixels, so slow progress creeps instead of stepping.
+                let w = f.w() as f64 * frac.get().clamp(0.0, 1.0);
+                if w > 0.0 {
+                    crate::fx::fill_rounded(f.x() as f64, y as f64, w.max(h as f64), h as f64, h as f64 / 2.0, t.accent, 1.0);
                 }
             });
         }
@@ -639,10 +647,10 @@ pub fn progress<S: 'static, M: 'static>(value: impl Fn(&S) -> f64 + 'static) -> 
                 frac.set(v);
                 repaint(&mut w);
             } else {
-                // Constant speed, slightly longer than typical update
-                // intervals, so regular updates join into one smooth motion.
-                // Shrinking needs the background repainted, so repaint().
-                frac.follow(v, std::time::Duration::from_millis(200), move || repaint(&mut w));
+                // A spring: regular updates join into one flowing motion
+                // (it keeps its speed). Shrinking needs the background
+                // repainted, so repaint().
+                frac.spring_to(v, crate::anim::Spring::SMOOTH, move || repaint(&mut w));
             }
         });
         f.as_base_widget()

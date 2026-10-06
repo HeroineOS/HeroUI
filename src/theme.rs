@@ -64,6 +64,9 @@ pub struct Theme {
     /// Animate state changes (toggle knobs etc.). Off = reduced motion,
     /// also what a battery saver mode should set.
     pub animations: bool,
+    /// Animation frames per second: the screen's refresh rate looks
+    /// smoothest (60, 120, 144...). Only matters while something moves.
+    pub frame_rate: i32,
     /// Freedesktop icon theme for app icons, e.g. "Papirus". Empty = GTK's
     /// setting, then hicolor/Adwaita.
     pub icon_theme: String,
@@ -93,6 +96,7 @@ impl Theme {
             font_size: 14,
             font: String::new(),
             animations: true,
+            frame_rate: 60,
             icon_theme: String::new(),
         }
     }
@@ -202,6 +206,7 @@ impl Theme {
                     )
                 }
                 "animations" => set(&mut self.animations, parse_bool(value)),
+                "frame_rate" => set(&mut self.frame_rate, value.parse().ok().filter(|v| (24..=360).contains(v))),
                 _ => {}
             }
         }
@@ -248,6 +253,9 @@ impl Theme {
         }
         let _ = writeln!(s, "font = {}", self.font);
         let _ = writeln!(s, "animations = {}", self.animations);
+        if self.frame_rate != 60 {
+            let _ = writeln!(s, "frame_rate = {}", self.frame_rate);
+        }
         if !self.icon_theme.is_empty() {
             let _ = writeln!(s, "icon_theme = {}", self.icon_theme);
         }
@@ -307,6 +315,7 @@ impl Theme {
         fltk::misc::Tooltip::set_hoverdelay(0.1);
         RADIUS.store(self.radius, Ordering::Relaxed);
         crate::anim::set_enabled(self.animations);
+        crate::anim::set_frame_rate(self.frame_rate);
         app::set_frame_type_cb(ROUNDED, draw_rounded, 0, 0, 0, 0);
     }
 }

@@ -83,30 +83,54 @@ pub fn popover_at<S: 'static, M: Clone + 'static>(
         let reveal = crate::anim::Tween::new(1.0);
         win.set_frame(FrameType::NoBox);
         win.super_draw(false);
+        // Where the anchor's top is in the parent window (to tell whether
+        // the compositor put the popover above it).
+        let anchor_y = Rc::new(Cell::new(0));
         {
-            let reveal = reveal.clone();
+            let (reveal, anchor_y) = (reveal.clone(), anchor_y.clone());
+            let snap = crate::fx::Snapshot::new();
             win.draw(move |w| {
                 let t = crate::theme::current();
-                let h = ((w.h() as f64) * reveal.get()).round().max(1.0) as i32;
-                let r = RADIUS.with(Cell::get).unwrap_or(t.radius).min(16).min(h / 2);
+                let r_ = reveal.get();
+                let moving = r_ != 1.0;
+                let panel = |w: &mut Window, h: i32| {
+                    let r = if round { RADIUS.with(Cell::get).unwrap_or(t.radius).min(16).min(h / 2) } else { 0 };
+                    fltk::draw::set_draw_color(t.border);
+                    fltk::draw::draw_rounded_rectf(0, 0, w.w(), h, r);
+                    fltk::draw::set_draw_color(t.background);
+                    fltk::draw::draw_rounded_rectf(1, 1, w.w() - 2, h - 2, (r - 1).max(0));
+                    fltk::draw::push_clip(0, 0, w.w(), h);
+                    w.draw_children();
+                    fltk::draw::pop_clip();
+                };
                 if round {
                     #[cfg(feature = "layer-shell")]
                     unsafe {
                         fltk_sys::window::Fl_wl_clear_rect(0, 0, w.w(), w.h())
                     };
+                    // Pops in: grows out of the edge next to its anchor
+                    // (bottom if it opened above it), fading in, settling
+                    // with a little overshoot; shrinks and fades away.
+                    if moving {
+                        let full = (0, 0, w.w(), w.h());
+                        let mut w2 = w.clone();
+                        if snap.record(full, || panel(&mut w2, full.3)) {
+                            let above = popup_y(w).is_some_and(|y| y + w.h() <= anchor_y.get());
+                            let origin = (w.w() as f64 / 2.0, if above { w.h() as f64 } else { 0.0 });
+                            let scale = (0.94 + 0.06 * r_, 0.88 + 0.12 * r_);
+                            snap.paint(origin, scale, (0.0, 0.0), (r_ * 1.5).clamp(0.0, 1.0));
+                            snap.clear();
+                            return;
+                        }
+                    }
                 } else {
                     // X11: no see-through; the unrolled part is the panel.
                     fltk::draw::set_draw_color(t.background);
                     fltk::draw::draw_rectf(0, 0, w.w(), w.h());
                 }
-                let r = if round { r } else { 0 };
-                fltk::draw::set_draw_color(t.border);
-                fltk::draw::draw_rounded_rectf(0, 0, w.w(), h, r);
-                fltk::draw::set_draw_color(t.background);
-                fltk::draw::draw_rounded_rectf(1, 1, w.w() - 2, h - 2, (r - 1).max(0));
-                fltk::draw::push_clip(0, 0, w.w(), h);
-                w.draw_children();
-                fltk::draw::pop_clip();
+                // Unrolls where it can't pop in (X11).
+                let h = ((w.h() as f64) * r_.min(1.0)).round().max(1.0) as i32;
+                panel(w, h);
             });
         }
         if let Some(g) = outer {
@@ -176,7 +200,7 @@ pub fn popover_at<S: 'static, M: Clone + 'static>(
                 // Opened again while rolling up: unroll.
                 closing.set(false);
                 let mut w2 = win.clone();
-                reveal.animate_to(1.0, OPEN, move || w2.redraw());
+                reveal.animate_ease(1.0, OPEN, crate::anim::snappy, move || w2.redraw());
                 return;
             }
             if want && win.shown() {
@@ -198,7 +222,7 @@ pub fn popover_at<S: 'static, M: Clone + 'static>(
                 // Rolls up, then hides (at once with animations off).
                 closing.set(true);
                 let (mut w2, r2, c2) = (win.clone(), reveal.clone(), closing.clone());
-                reveal.animate_to(0.0, CLOSE, move || {
+                reveal.animate_ease(0.0, CLOSE, crate::anim::ease_in, move || {
                     if w2.was_deleted() || !c2.get() {
                         return;
                     }
@@ -220,17 +244,18 @@ pub fn popover_at<S: 'static, M: Clone + 'static>(
                 None => (anchor.x(), anchor.y(), anchor.w(), anchor.h()),
             };
             reveal.set(0.0);
+            anchor_y.set(r.1);
             show_at(&mut win, &*parent, r);
             let mut w2 = win.clone();
-            reveal.animate_to(1.0, OPEN, move || w2.redraw());
+            reveal.animate_ease(1.0, OPEN, crate::anim::snappy, move || w2.redraw());
         });
         result
     })
 }
 
-/// How long a popover takes to unroll and to roll up.
-const OPEN: std::time::Duration = std::time::Duration::from_millis(140);
-const CLOSE: std::time::Duration = std::time::Duration::from_millis(100);
+/// How long a popover takes to pop in and to go away.
+const OPEN: std::time::Duration = std::time::Duration::from_millis(240);
+const CLOSE: std::time::Duration = std::time::Duration::from_millis(130);
 
 thread_local! {
     /// Corner radius of popovers (None: the theme's).
@@ -313,6 +338,18 @@ fn round_corners(win: &mut Window) -> bool {
 thread_local! {
     /// X11: where each shown popover's parent window was (by popover).
     static PARENT_AT: std::cell::RefCell<std::collections::HashMap<usize, (i32, i32)>> = Default::default();
+}
+
+/// Wayland: where popover window `win` is in its parent, vertically.
+fn popup_y(win: &Window) -> Option<i32> {
+    #[cfg(feature = "layer-shell")]
+    if crate::on_wayland() {
+        let (mut x, mut y) = (0, 0);
+        let known = unsafe { fltk_sys::window::Fl_Window_wl_popup_position(win.as_widget_ptr() as *mut _, &mut x, &mut y) };
+        return (known != 0).then_some(y);
+    }
+    let _ = win;
+    None
 }
 
 /// Where the popover holding `w` is, relative to the window it drops down
