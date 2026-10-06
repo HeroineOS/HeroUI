@@ -178,6 +178,29 @@ pub fn fill_circle(cx: f64, cy: f64, radius: f64, color: fltk::enums::Color, alp
     fill_rounded(cx - radius, cy - radius, 2.0 * radius, 2.0 * radius, radius, color, alpha);
 }
 
+/// Draws what `draw` paints inside `rect` scaled by `scale` around the
+/// rectangle's center and with opacity `alpha`: things popping in or
+/// shrinking away. Without effects (X11) it just draws, unless `alpha` is
+/// tiny. Call while the window is being drawn.
+pub fn draw_scaled(rect: (i32, i32, i32, i32), scale: f64, alpha: f64, draw: impl FnOnce()) {
+    if (scale - 1.0).abs() < 0.001 && alpha >= 0.999 {
+        draw();
+        return;
+    }
+    let snap = Snapshot::new();
+    let r = (rect.0 - 4, rect.1 - 4, rect.2 + 8, rect.3 + 8);
+    let mut draw = Some(draw);
+    let recorded = draw_no_clip(|| snap.record(r, || (draw.take().unwrap())()));
+    if recorded {
+        let c = (rect.0 as f64 + rect.2 as f64 / 2.0, rect.1 as f64 + rect.3 as f64 / 2.0);
+        snap.paint(c, (scale, scale), (0.0, 0.0), alpha);
+    } else if alpha > 0.05 {
+        if let Some(d) = draw.take() {
+            d();
+        }
+    }
+}
+
 /// Where a rectangle `(x, y, w, h)` ends up when scaled by `scale` around
 /// `origin` and moved by `offset`, grown to whole pixels (plus one, for
 /// smoothing): the area to repaint for a frame.
