@@ -51,6 +51,7 @@ pub mod hover;
 pub mod icons;
 mod popover;
 pub mod popup;
+pub mod process;
 mod task;
 pub mod theme;
 mod watch;
