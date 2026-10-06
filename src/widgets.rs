@@ -16,7 +16,7 @@ use std::rc::Rc;
 use fltk::button::Button;
 use fltk::draw;
 use fltk::draw::LineStyle;
-use fltk::enums::{Align, CallbackTrigger, Color, FrameType};
+use fltk::enums::{Align, CallbackTrigger, Color, Event, FrameType};
 use fltk::frame::Frame;
 use fltk::group::Flex;
 use fltk::input::Input;
@@ -866,6 +866,134 @@ pub fn icon<S: 'static, M: 'static>(name: impl Fn(&S) -> String + 'static, size:
                 *cur.borrow_mut() = n;
                 repaint(&mut w);
             }
+        });
+        f.as_base_widget()
+    })
+}
+
+/// Options side by side (or stacked, `vertical`), the chosen one
+/// highlighted: picking another sends `on_select(index)`, and the
+/// highlight slides over to it, stretching a little on the way (tabs,
+/// a mode switch, a page list). Give it a fixed size: each option gets an
+/// equal share.
+pub fn segmented<S: 'static, M: 'static>(
+    labels: &[&str],
+    vertical: bool,
+    selected: impl Fn(&S) -> usize + 'static,
+    on_select: impl Fn(usize) -> M + 'static,
+) -> Element<S, M> {
+    let labels: Vec<String> = labels.iter().map(|l| l.to_string()).collect();
+    Element::new(move |ctx| {
+        const GAP: i32 = 8;
+        let n = labels.len().max(1) as i32;
+        // Option i's rectangle within the widget.
+        let slot = move |w: i32, h: i32, i: usize| -> (i32, i32, i32, i32) {
+            let i = i as i32;
+            if vertical {
+                let rh = (h - GAP * (n - 1)) / n;
+                (0, i * (rh + GAP), w, rh)
+            } else {
+                let rw = (w - GAP * (n - 1)) / n;
+                (i * (rw + GAP), 0, rw, h)
+            }
+        };
+        // The highlight's leading and trailing ends, as fractional indexes
+        // (the leading one is quicker: it stretches, then catches up).
+        let head = crate::anim::Tween::new(-1.0);
+        let tail = crate::anim::Tween::new(-1.0);
+        let hover: Rc<RefCell<crate::hover::HoverFade>> = Rc::default();
+        let mut f = Frame::default();
+        f.set_frame(FrameType::NoBox);
+        {
+            let (head, tail, hover, labels) = (head.clone(), tail.clone(), hover.clone(), labels.clone());
+            f.draw(move |f| {
+                let t = crate::theme::current();
+                let (fx, fy) = (f.x() as f64, f.y() as f64);
+                let at = |v: f64| {
+                    let v = v.clamp(0.0, (n - 1) as f64);
+                    let (a, b) = (slot(f.w(), f.h(), v.floor() as usize), slot(f.w(), f.h(), v.ceil() as usize));
+                    let k = v - v.floor();
+                    let l = |p: i32, q: i32| p as f64 + (q - p) as f64 * k;
+                    (l(a.0, b.0), l(a.1, b.1), l(a.2, b.2), l(a.3, b.3))
+                };
+                let hv = hover.borrow();
+                for i in 0..labels.len() {
+                    let (x, y, w, h) = slot(f.w(), f.h(), i);
+                    let bg = mix(t.surface_alt, Color::White, 0.1 * hv.amount(i));
+                    draw::set_draw_color(if f.active_r() { bg } else { mix(bg, t.background, 0.6) });
+                    draw::draw_rounded_rectf(f.x() + x, f.y() + y, w, h, t.radius.min(h / 2));
+                }
+                let (h0, t0) = (head.get(), tail.get());
+                let span = (h0 >= 0.0).then(|| {
+                    let (a, b) = (at(h0), at(t0));
+                    let (x0, y0) = (a.0.min(b.0), a.1.min(b.1));
+                    let (x1, y1) = ((a.0 + a.2).max(b.0 + b.2), (a.1 + a.3).max(b.1 + b.3));
+                    let r = t.radius.min(a.3 as i32 / 2) as f64;
+                    crate::fx::fill_rounded(fx + x0, fy + y0, x1 - x0, y1 - y0, r, t.accent, 1.0);
+                    (x0, y0, x1, y1)
+                });
+                draw::set_font(t.font(), t.font_size);
+                for (i, label) in labels.iter().enumerate() {
+                    let (x, y, w, h) = slot(f.w(), f.h(), i);
+                    // Text under the highlight takes its color as it passes.
+                    let cover = span.map_or(0.0, |(x0, y0, x1, y1)| {
+                        let (a, b) = if vertical { ((y0, y1), (y as f64, (y + h) as f64)) } else { ((x0, x1), (x as f64, (x + w) as f64)) };
+                        ((a.1.min(b.1) - a.0.max(b.0)) / (b.1 - b.0)).clamp(0.0, 1.0)
+                    });
+                    draw::set_draw_color(mix(t.text, t.accent_text, cover as f32));
+                    draw::draw_text2(label, f.x() + x, f.y() + y, w, h, Align::Center);
+                }
+            });
+        }
+        let emit = ctx.emitter();
+        {
+            let hover = hover.clone();
+            let pressed = Cell::new(None);
+            f.handle(move |f, ev| {
+                let (px, py) = (fltk::app::event_x() - f.x(), fltk::app::event_y() - f.y());
+                let at = (0..n as usize).find(|&i| {
+                    let (x, y, w, h) = slot(f.w(), f.h(), i);
+                    px >= x && px < x + w && py >= y && py < y + h
+                });
+                match ev {
+                    Event::Enter | Event::Move => {
+                        hover.borrow_mut().set(at, &f.as_base_widget());
+                        true
+                    }
+                    Event::Leave => {
+                        hover.borrow_mut().set(None, &f.as_base_widget());
+                        true
+                    }
+                    Event::Push => {
+                        pressed.set(at);
+                        true
+                    }
+                    Event::Released => {
+                        if let Some(i) = pressed.take().filter(|&i| Some(i) == at) {
+                            emit(on_select(i));
+                        }
+                        true
+                    }
+                    _ => false,
+                }
+            });
+        }
+        let w = f.clone();
+        ctx.bind(move |s| {
+            let i = selected(s) as f64;
+            if head.target() == i && head.get() >= 0.0 {
+                return;
+            }
+            let mut w = w.clone();
+            if head.get() < 0.0 || !w.visible_r() {
+                head.set(i);
+                tail.set(i);
+                w.redraw();
+                return;
+            }
+            let mut w2 = w.clone();
+            head.spring_to(i, crate::anim::Spring { response: 0.22, damping: 0.8 }, move || w.redraw());
+            tail.spring_to(i, crate::anim::Spring { response: 0.34, damping: 0.92 }, move || w2.redraw());
         });
         f.as_base_widget()
     })

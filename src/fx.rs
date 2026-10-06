@@ -183,7 +183,12 @@ pub fn fill_circle(cx: f64, cy: f64, radius: f64, color: fltk::enums::Color, alp
 /// shrinking away. Without effects (X11) it just draws, unless `alpha` is
 /// tiny. Call while the window is being drawn.
 pub fn draw_scaled(rect: (i32, i32, i32, i32), scale: f64, alpha: f64, draw: impl FnOnce()) {
-    if (scale - 1.0).abs() < 0.001 && alpha >= 0.999 {
+    draw_transformed(rect, scale, (0.0, 0.0), alpha, draw)
+}
+
+/// Like [`draw_scaled`], also moved by `offset`.
+pub fn draw_transformed(rect: (i32, i32, i32, i32), scale: f64, offset: (f64, f64), alpha: f64, draw: impl FnOnce()) {
+    if (scale - 1.0).abs() < 0.001 && alpha >= 0.999 && offset.0.abs() < 0.01 && offset.1.abs() < 0.01 {
         draw();
         return;
     }
@@ -193,7 +198,7 @@ pub fn draw_scaled(rect: (i32, i32, i32, i32), scale: f64, alpha: f64, draw: imp
     let recorded = draw_no_clip(|| snap.record(r, || (draw.take().unwrap())()));
     if recorded {
         let c = (rect.0 as f64 + rect.2 as f64 / 2.0, rect.1 as f64 + rect.3 as f64 / 2.0);
-        snap.paint(c, (scale, scale), (0.0, 0.0), alpha);
+        snap.paint(c, (scale, scale), offset, alpha);
     } else if alpha > 0.05 {
         if let Some(d) = draw.take() {
             d();

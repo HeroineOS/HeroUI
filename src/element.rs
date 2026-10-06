@@ -170,6 +170,64 @@ impl<S: 'static, M: 'static> Element<S, M> {
         self
     }
 
+    /// Like [`Element::visible`], but appearing animates: it rises a
+    /// little into place and fades in (pages switching, sections opening).
+    /// Hiding is instant. On Wayland; elsewhere it's `visible`.
+    pub fn transition(self, f: impl Fn(&S) -> bool + 'static) -> Self {
+        let fixed = self.fixed;
+        let mut e = Element::new(move |ctx| {
+            use fltk::group::Group;
+            let mut g = Group::default();
+            g.set_frame(fltk::enums::FrameType::NoBox);
+            let child = self.build(ctx);
+            g.end();
+            g.resizable(&child);
+            {
+                let mut child = child.clone();
+                g.resize_callback(move |_, x, y, w, h| child.resize(x, y, w, h));
+            }
+            let t = crate::anim::Tween::new(1.0);
+            g.super_draw(false);
+            {
+                let t = t.clone();
+                g.draw(move |g| {
+                    let v = t.get();
+                    let mut g2 = g.clone();
+                    let rect = (g.x(), g.y(), g.w(), g.h());
+                    crate::fx::draw_transformed(rect, 1.0, (0.0, (1.0 - v) * 18.0), v.clamp(0.0, 1.0), move || g2.draw_children());
+                });
+            }
+            let mut w = g.clone();
+            let mut last = None;
+            ctx.bind(move |s| {
+                let v = f(s);
+                if last == Some(v) {
+                    return;
+                }
+                let first = last.is_none();
+                last = Some(v);
+                if v {
+                    w.show();
+                    if !first && crate::on_wayland() {
+                        t.set(0.0);
+                        let w2 = w.clone();
+                        t.animate_ease(1.0, std::time::Duration::from_millis(260), crate::anim::ease_out_quint, move || {
+                            if let Some(mut win) = w2.window() {
+                                win.set_damage_area(fltk::enums::Damage::All, w2.x(), w2.y(), w2.w(), w2.h());
+                            }
+                        });
+                    }
+                } else {
+                    w.hide();
+                }
+                relayout_parent(&w);
+            });
+            g.as_base_widget()
+        });
+        e.fixed = fixed;
+        e
+    }
+
     /// Interactive only while `f` is true (greyed out otherwise).
     pub fn enabled(mut self, f: impl Fn(&S) -> bool + 'static) -> Self {
         self.enabled = Some(Box::new(f));
