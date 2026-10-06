@@ -27,14 +27,14 @@ thread_local! {
 
 /// True while the mouse is over `w`. For custom draw callbacks; the
 /// widget is redrawn automatically when this changes.
-pub fn is_hovered<W: WidgetExt>(w: &W) -> bool {
+pub fn is_hovered<W: WidgetExt + ?Sized>(w: &W) -> bool {
     HOVERED.with(|h| h.get() == w.as_widget_ptr() as usize)
 }
 
 /// How hovered `w` looks, 0.0 to 1.0: like [`is_hovered`], but it fades
 /// in (~110 ms) and softly out (~240 ms); instantly with animations off.
 /// Draw code blends the hover color by it.
-pub fn hover_amount<W: WidgetExt>(w: &W) -> f32 {
+pub fn hover_amount<W: WidgetExt + ?Sized>(w: &W) -> f32 {
     let ptr = w.as_widget_ptr() as usize;
     let fading = FADES.with(|f| f.borrow().iter().find(|(p, _)| *p == ptr).map(|(_, t)| t.get() as f32));
     fading.unwrap_or(if is_hovered(w) { 1.0 } else { 0.0 })
@@ -43,7 +43,7 @@ pub fn hover_amount<W: WidgetExt>(w: &W) -> f32 {
 /// How pressed `w` looks, 0.0 to 1.0: it dips in fast (~70 ms) when the
 /// pointer goes down on it and springs back (~260 ms) when released, so
 /// even a quick tap shows. Draw code dims and shrinks a little by it.
-pub fn press_amount<W: WidgetExt>(w: &W) -> f32 {
+pub fn press_amount<W: WidgetExt + ?Sized>(w: &W) -> f32 {
     let ptr = w.as_widget_ptr() as usize;
     PRESSES.with(|f| f.borrow().iter().find(|(p, _)| *p == ptr).map_or(0.0, |(_, t)| t.get() as f32))
 }
