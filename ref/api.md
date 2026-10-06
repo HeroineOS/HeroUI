@@ -40,6 +40,11 @@ backgrounds float over the desktop (bar islands). Anti-aliased edges blend. Need
 `heroui::is_transparent()` says which you got (e.g. draw islands in a contrasting color
 when it's false).
 
+`.parent_window("wayland:HANDLE")`: the window is a dialog of another program's window, as
+desktop portals name it (exported with xdg-foreign). Compositors keep it above that window
+and usually float and center it over it (HeroWM, sway). Needs feature `layer-shell` (the
+fltk-sys fork) and Wayland; ignored otherwise.
+
 Features: `wayland` (default; hybrid Wayland/X11), `layer-shell`, `tokio`.
 
 Drawing model: retained. `view` runs once; after each batch of messages, bindings touch only

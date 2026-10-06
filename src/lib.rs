@@ -149,6 +149,9 @@ pub struct Settings {
     /// Wayland; elsewhere the window stays opaque. Check
     /// [`is_transparent`] to know which you got.
     pub transparent: bool,
+    /// Another program's window this one belongs to, as desktop portals
+    /// name it ("wayland:HANDLE"); see [`Settings::parent_window`].
+    pub parent_window: Option<String>,
 }
 
 /// Window types from the EWMH spec. On X11 (and XWayland compositors that
@@ -203,6 +206,7 @@ impl Settings {
             reserve: None,
             span: false,
             transparent: false,
+            parent_window: None,
         }
     }
 
@@ -277,6 +281,17 @@ impl Settings {
     }
     pub fn transparent(mut self, on: bool) -> Self {
         self.transparent = on;
+        self
+    }
+
+    /// Shows the window as a dialog of another program's window, named as
+    /// desktop portals pass it: "wayland:HANDLE" (exported with
+    /// xdg-foreign). Compositors keep it above that window and usually
+    /// float and center it over it. Needs feature `layer-shell` (the
+    /// fltk-sys fork) and Wayland; otherwise ignored, as are other forms
+    /// ("x11:XID", "").
+    pub fn parent_window(mut self, handle: &str) -> Self {
+        self.parent_window = Some(handle.to_string());
         self
     }
 
@@ -427,6 +442,14 @@ pub fn run<A: App>(mut app: A, mut settings: Settings) -> Result<(), fltk::prelu
     if settings.transparent && on_wayland() {
         wayland::make_transparent(&mut win);
         TRANSPARENT.with(|t| t.set(true));
+    }
+    #[cfg(feature = "layer-shell")]
+    if let Some(handle) = settings.parent_window.as_deref().and_then(|h| h.strip_prefix("wayland:")).filter(|h| !h.is_empty()) {
+        if on_wayland() {
+            if let Ok(c) = std::ffi::CString::new(handle) {
+                unsafe { fltk_sys::window::Fl_Window_wl_parent_exported(win.as_widget_ptr() as *mut fltk_sys::window::Fl_Window, c.as_ptr()) };
+            }
+        }
     }
     let _ = layer;
     win.show();
