@@ -292,10 +292,13 @@ fn shown_changed(delta: i32) {
     });
 }
 
+/// A popover: its anchor, its window, how to ask the app to close it.
+type Registered = (fltk::widget::Widget, Window, Rc<dyn Fn()>);
+
 thread_local! {
-    /// Popovers and their anchors, to delete a popover with its anchor.
-    /// Popovers, their anchors, and how to ask the app to close each.
-    static REGISTRY: std::cell::RefCell<Vec<(fltk::widget::Widget, Window, Rc<dyn Fn()>)>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Popovers, their anchors (to delete a popover with its anchor), and
+    /// how to ask the app to close each.
+    static REGISTRY: std::cell::RefCell<Vec<Registered>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Wayland: a press in `window` while popovers are open. Compositors only
