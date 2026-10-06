@@ -136,12 +136,21 @@ pub fn popover_at<S: 'static, M: Clone + 'static>(
         if let Some(g) = outer {
             Group::set_current(Some(&g));
         }
-        REGISTRY.with(|r| r.borrow_mut().push((anchor.clone(), win.clone())));
-
         // True while the app wants it open; a hide we didn't ask for
-        // (outside click, Escape) sends `on_close`.
+        // (the compositor dismissing it) sends `on_close`.
         let wanted = Rc::new(Cell::new(false));
         let emit = ctx.emitter();
+        // Escape or a click elsewhere in the app: ask the app to close it,
+        // so it goes away with its animation.
+        let request: Rc<dyn Fn()> = {
+            let (wanted, emit, on_close) = (wanted.clone(), emit.clone(), on_close.clone());
+            Rc::new(move || {
+                if wanted.replace(false) {
+                    emit(on_close.clone());
+                }
+            })
+        };
+        REGISTRY.with(|r| r.borrow_mut().push((anchor.clone(), win.clone(), request.clone())));
         win.set_callback(|w| w.hide());
         {
             let wanted = wanted.clone();
@@ -176,7 +185,7 @@ pub fn popover_at<S: 'static, M: Clone + 'static>(
                     false
                 }
                 Event::KeyDown if fltk::app::event_key() == Key::Escape => {
-                    w.hide();
+                    request();
                     true
                 }
                 // X11: the grab sends us clicks anywhere; outside closes.
@@ -285,7 +294,8 @@ fn shown_changed(delta: i32) {
 
 thread_local! {
     /// Popovers and their anchors, to delete a popover with its anchor.
-    static REGISTRY: std::cell::RefCell<Vec<(fltk::widget::Widget, Window)>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Popovers, their anchors, and how to ask the app to close each.
+    static REGISTRY: std::cell::RefCell<Vec<(fltk::widget::Widget, Window, Rc<dyn Fn()>)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Wayland: a press in `window` while popovers are open. Compositors only
@@ -294,14 +304,14 @@ thread_local! {
 /// leave it open. Closes them unless `window` is one of them; true if it
 /// did (the click is used up, like closing a menu with a click).
 pub(crate) fn press_outside(window: *mut std::ffi::c_void) -> bool {
-    let open: Vec<Window> = REGISTRY.with(|r| {
-        r.borrow().iter().filter(|(_, w)| !w.was_deleted() && w.shown()).map(|(_, w)| w.clone()).collect()
+    let open: Vec<(Window, Rc<dyn Fn()>)> = REGISTRY.with(|r| {
+        r.borrow().iter().filter(|(_, w, _)| !w.was_deleted() && w.shown()).map(|(_, w, c)| (w.clone(), c.clone())).collect()
     });
-    if open.is_empty() || open.iter().any(|w| w.as_widget_ptr() as *mut std::ffi::c_void == window) {
+    if open.is_empty() || open.iter().any(|(w, _)| w.as_widget_ptr() as *mut std::ffi::c_void == window) {
         return false;
     }
-    for mut w in open {
-        w.hide();
+    for (_, close) in open {
+        close();
     }
     true
 }
@@ -309,7 +319,7 @@ pub(crate) fn press_outside(window: *mut std::ffi::c_void) -> bool {
 /// Deletes the popovers whose anchor is gone (after a rebuild).
 pub(crate) fn forget_deleted() {
     REGISTRY.with(|r| {
-        r.borrow_mut().retain(|(anchor, win)| {
+        r.borrow_mut().retain(|(anchor, win, _)| {
             if anchor.was_deleted() {
                 if !win.was_deleted() {
                     let mut w = win.clone();
