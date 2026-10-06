@@ -351,7 +351,17 @@ pub fn run<A: App>(mut app: A, mut settings: Settings) -> Result<(), fltk::prelu
     let (tx, rx) = mpsc::channel::<A::Message>();
     let emit: Rc<dyn Fn(A::Message)> = {
         let q = queue.clone();
-        Rc::new(move |m| q.borrow_mut().push_back(m))
+        Rc::new(move |m| {
+            let mut q = q.borrow_mut();
+            // Wake the loop: a message sent from a timeout (which runs
+            // inside FLTK's wait, which doesn't return for it) would
+            // otherwise wait for the next event, arriving late and in
+            // pairs. Once per batch.
+            if q.is_empty() {
+                fltk::app::awake();
+            }
+            q.push_back(m);
+        })
     };
 
     let mut ctx = Ctx::new(emit.clone(), theme.clone());
