@@ -131,13 +131,27 @@ unsafe extern "C" fn frame_shown() {
     }
 }
 
+fn frame_pending() -> bool {
+    #[cfg(feature = "layer-shell")]
+    if crate::on_wayland() {
+        return unsafe { fltk_sys::window::Fl_wl_frame_pending() } != 0;
+    }
+    false
+}
+
 /// The timer: the clock off Wayland, and the fallback when no frames are
 /// being shown (nothing has been drawn yet, or the window is hidden).
 fn timer_tick(handle: fltk::app::TimeoutHandle) {
     let now = Instant::now();
-    let paced = PACED.with(Cell::get)
-        && LAST_TICK.with(Cell::get).is_some_and(|t| now.duration_since(t).as_secs_f64() < frame_interval() * 1.5);
-    let more = if paced { JOBS.with(|j| !j.borrow().is_empty()) } else { run_jobs(now) };
+    let since = LAST_TICK.with(Cell::get).map_or(f64::MAX, |t| now.duration_since(t).as_secs_f64());
+    let paced = PACED.with(Cell::get) && since < frame_interval() * 1.5;
+    // A frame still on its way to the screen (the compositor is slow to
+    // show it: waking up after idle, busy): FLTK won't send another until
+    // it's shown, so stepping now would only move the animation on
+    // unseen. Wait for it (the frame hook steps then), up to a second: a
+    // hidden window never gets its frames shown.
+    let waiting = PACED.with(Cell::get) && frame_pending() && since < 1.0;
+    let more = if paced || waiting { JOBS.with(|j| !j.borrow().is_empty()) } else { run_jobs(now) };
     if more {
         fltk::app::repeat_timeout3(frame_interval(), handle);
     } else {
