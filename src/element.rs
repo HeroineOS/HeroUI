@@ -109,6 +109,7 @@ pub struct Element<S, M> {
     /// Size along the parent's axis as last known: fixed, computed, or
     /// natural (-1: none). Read by `scroll`.
     hint: Rc<Cell<i32>>,
+    autofocus: bool,
 }
 
 impl<S: 'static, M: 'static> Element<S, M> {
@@ -133,7 +134,15 @@ impl<S: 'static, M: 'static> Element<S, M> {
             enabled: None,
             fixed_fn: None,
             hint: Rc::new(Cell::new(-1)),
+            autofocus: false,
         }
+    }
+
+    /// Has the keyboard focus when the window opens (with its focus ring:
+    /// Enter presses a button that has it), e.g. a dialog's main button.
+    pub fn autofocus(mut self) -> Self {
+        self.autofocus = true;
+        self
     }
 
     /// Fixed size (px) along the parent row/column's axis: height inside a
@@ -262,6 +271,11 @@ impl<S: 'static, M: 'static> Element<S, M> {
         let outer = ctx.hint.replace(self.hint.clone());
         let widget = (self.build)(ctx);
         ctx.hint = outer;
+        if self.autofocus {
+            // Taken when the window gets the keyboard (FLTK picks its own
+            // first widget then).
+            crate::widgets::focus_when_ready(widget.clone());
+        }
 
         if let Some(mut flex) = Flex::from_dyn_widget(&widget) {
             if let Some(p) = self.padding {

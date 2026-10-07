@@ -251,6 +251,74 @@ pub fn press_shape(b: &Button, color: Color, radius: i32, p: f32) {
     crate::fx::fill_rounded(b.x() as f64 + i, b.y() as f64 + i, b.w() as f64 - 2.0 * i, b.h() as f64 - 2.0 * i, radius as f64 - i, color, 1.0);
 }
 
+thread_local! {
+    /// The keyboard is being used to move around (Tab, arrows, Enter):
+    /// the focused button shows a ring. A click hides it again.
+    static KEYBOARD: Cell<bool> = const { Cell::new(false) };
+}
+
+thread_local! {
+    /// The widget to focus once the window has the keyboard.
+    static AUTOFOCUS: RefCell<Option<fltk::widget::Widget>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn focus_when_ready(w: fltk::widget::Widget) {
+    AUTOFOCUS.with(|a| *a.borrow_mut() = Some(w));
+}
+
+/// Gives the waiting widget the focus (the window has the keyboard now).
+/// FLTK still settles the window's own focus after the focus event, so
+/// this runs then and again on the next loop turn; on the first key press
+/// it's done for good (`done`). A click first cancels it (see
+/// [`cancel_autofocus`]): the user chose.
+pub(crate) fn take_autofocus(done: bool) {
+    let Some(mut w) = AUTOFOCUS.with(|a| a.borrow().clone()) else { return };
+    if w.visible_r() && w.take_focus().is_ok() {
+        set_keyboard_focus(true);
+        w.redraw();
+    }
+    if done {
+        AUTOFOCUS.with(|a| *a.borrow_mut() = None);
+    }
+}
+
+pub(crate) fn cancel_autofocus() {
+    AUTOFOCUS.with(|a| *a.borrow_mut() = None);
+}
+
+pub(crate) fn set_keyboard_focus(on: bool) {
+    if KEYBOARD.with(|k| k.replace(on)) != on {
+        if let Some(mut w) = fltk::app::focus() {
+            w.redraw();
+        }
+    }
+}
+
+/// Whether `w` has the keyboard focus and the keyboard is in use (draw a
+/// focus ring then; see [`focus_ring`]).
+pub fn keyboard_focused<W: WidgetExt>(w: &W) -> bool {
+    KEYBOARD.with(Cell::get) && fltk::app::focus().is_some_and(|f| f.as_widget_ptr() == w.as_widget_ptr())
+}
+
+/// A ring inside `w`'s edge when it has the keyboard focus.
+pub fn focus_ring<W: WidgetExt>(w: &W, radius: i32) {
+    if keyboard_focused(w) {
+        let t = crate::theme::current();
+        draw::set_draw_color(t.accent);
+        draw::set_line_style(fltk::draw::LineStyle::Solid, 2);
+        draw::draw_rounded_rect(w.x() + 1, w.y() + 1, w.w() - 2, w.h() - 2, radius);
+        draw::set_line_style(fltk::draw::LineStyle::Solid, 0);
+    }
+}
+
+/// A button the keyboard can reach: Tab and the arrows move focus to it,
+/// Enter or Space presses it, and it shows a ring (see [`focus_ring`]).
+pub fn focusable_button(draw: impl FnMut(&mut Button) + 'static) -> Button {
+    let mut b = custom_button(draw);
+    b.set_visible_focus();
+    b
+}
+
 fn make_button<S: 'static, M: Clone + 'static>(
     label: &str,
     msg: M,
@@ -258,7 +326,7 @@ fn make_button<S: 'static, M: Clone + 'static>(
 ) -> Element<S, M> {
     let label = label.to_string();
     Element::new(move |ctx| {
-        let mut b = custom_button(move |b| {
+        let mut b = focusable_button(move |b| {
             let t = crate::theme::current();
             let (bg, fg) = if primary { (t.accent, t.accent_text) } else { (t.surface_alt, t.text) };
             let p = press_amount(b);
@@ -272,6 +340,15 @@ fn make_button<S: 'static, M: Clone + 'static>(
             draw::set_draw_color(fg);
             draw::set_font(t.font(), t.font_size);
             draw::draw_text2(&label, b.x(), b.y(), b.w(), b.h(), Align::Center);
+            // On the accent, the ring in the text color.
+            if primary && keyboard_focused(b) {
+                draw::set_draw_color(mix(t.accent_text, t.accent, 0.35));
+                draw::set_line_style(fltk::draw::LineStyle::Solid, 2);
+                draw::draw_rounded_rect(b.x() + 3, b.y() + 3, b.w() - 6, b.h() - 6, (t.radius - 2).clamp(0, b.h() / 2));
+                draw::set_line_style(fltk::draw::LineStyle::Solid, 0);
+            } else {
+                focus_ring(b, t.radius.min(b.h() / 2));
+            }
         });
         let emit = ctx.emitter();
         b.set_callback(move |_| emit(msg.clone()));
@@ -298,9 +375,12 @@ fn bool_button<S: 'static, M: 'static>(
     draw: impl Fn(&mut Button, bool) + 'static,
 ) -> Button {
     let on = Rc::new(Cell::new(false));
-    let mut b = custom_button({
+    let mut b = focusable_button({
         let on = on.clone();
-        move |b| draw(b, on.get())
+        move |b| {
+            draw(b, on.get());
+            focus_ring(b, crate::theme::current().radius.min(b.h() / 2));
+        }
     });
     let emit = ctx.emitter();
     {
@@ -330,7 +410,7 @@ pub fn toggle<S: 'static, M: 'static>(
         // `on`: the state; `pos`: where the knob is drawn, 0.0 (off) to 1.0.
         let on = Rc::new(Cell::new(false));
         let pos = crate::anim::Tween::new(0.0);
-        let mut b = custom_button({
+        let mut b = focusable_button({
             let pos = pos.clone();
             move |b| {
                 let t = crate::theme::current();
@@ -352,6 +432,13 @@ pub fn toggle<S: 'static, M: 'static>(
                 let stretch = (pos.velocity().abs() * travel * 0.012).min(7.0) + 4.0 * press_amount(b) as f64;
                 let kx = tx as f64 + 3.0 + travel * p - stretch * p.clamp(0.0, 1.0);
                 crate::fx::fill_rounded(kx, ty as f64 + 3.0, knob + stretch, knob, knob / 2.0, mix(t.text_dim, t.accent_text, pc), 1.0);
+                // Focused: a ring around the switch.
+                if keyboard_focused(b) {
+                    draw::set_draw_color(t.accent);
+                    draw::set_line_style(LineStyle::Solid, 2);
+                    draw::draw_rounded_rect(tx - 3, ty - 3, tw + 6, th + 6, th / 2 + 3);
+                    draw::set_line_style(LineStyle::Solid, 0);
+                }
             }
         });
         let emit = ctx.emitter();
@@ -427,7 +514,7 @@ pub fn dropdown<S: 'static, M: 'static, T: AsRef<str> + 'static>(
         // binding only when they change.
         let opts: Rc<RefCell<Vec<String>>> = Rc::default();
         let sel = Rc::new(Cell::new(usize::MAX));
-        let mut b = custom_button({
+        let mut b = focusable_button({
             let (opts, sel) = (opts.clone(), sel.clone());
             move |b| {
                 let t = crate::theme::current();
@@ -448,6 +535,7 @@ pub fn dropdown<S: 'static, M: 'static, T: AsRef<str> + 'static>(
                 draw::draw_line(cx - 4, cy - 2, cx, cy + 2);
                 draw::draw_line(cx, cy + 2, cx + 4, cy - 2);
                 draw::set_line_style(LineStyle::Solid, 0);
+                focus_ring(b, t.radius.min(b.h() / 2));
             }
         });
         let emit = ctx.emitter();
@@ -590,6 +678,13 @@ pub fn slider<S: 'static, M: 'static>(
             draw::set_draw_color(accent);
             draw::draw_rounded_rectf(x, cy - 3, filled.max(6), 6, 3);
             draw::draw_pie(x + filled - knob / 2, cy - knob / 2, knob, knob, 0.0, 360.0);
+            // Focused (the arrows move it): a ring around the knob.
+            if keyboard_focused(s) {
+                draw::set_draw_color(t.accent);
+                draw::set_line_style(LineStyle::Solid, 2);
+                draw::draw_arc(x + filled - knob / 2 - 3, cy - knob / 2 - 3, knob + 6, knob + 6, 0.0, 360.0);
+                draw::set_line_style(LineStyle::Solid, 0);
+            }
         });
         let emit = ctx.emitter();
         s.set_callback(move |s| {
@@ -762,6 +857,9 @@ pub fn scroll<S: 'static, M: 'static>(children: Vec<Element<S, M>>) -> Element<S
         let t = ctx.theme_rc();
         let mut sc = Scroll::default();
         sc.set_type(ScrollType::Vertical);
+        // Not Tab stops (scrolling follows the focus instead).
+        sc.scrollbar().clear_visible_focus();
+        sc.hscrollbar().clear_visible_focus();
         // Opaque, so FLTK can scroll by copying pixels.
         sc.set_frame(FrameType::FlatBox);
         sc.set_scrollbar_size(10);

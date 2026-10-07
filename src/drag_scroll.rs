@@ -25,6 +25,7 @@ const FL_RELEASE: c_int = 2;
 const FL_DRAG: c_int = 5;
 const FL_MOVE: c_int = 11;
 const FL_KEYDOWN: c_int = 8;
+const FL_FOCUS: c_int = 6;
 const FL_MOUSEWHEEL: c_int = 19;
 
 thread_local! {
@@ -174,15 +175,43 @@ fn scroll_under(x: i32, y: i32) -> Option<Scroll> {
 unsafe extern "C" fn dispatch(event: c_int, window: *mut c_void) -> c_int {
     let pass = || unsafe { fltk_sys::fl::Fl_handle_(event, window as *mut _) };
     match event {
+        FL_FOCUS => {
+            let r = pass();
+            crate::widgets::take_autofocus(false);
+            fltk::app::add_timeout3(0.0, |_| crate::widgets::take_autofocus(false));
+            r
+        }
         FL_KEYDOWN => {
+            crate::widgets::take_autofocus(true);
+            use fltk::enums::Key;
+            let key = fltk::app::event_key();
+            // Moving focus with the keyboard shows where it is.
+            if matches!(key, Key::Tab | Key::Left | Key::Right | Key::Up | Key::Down) {
+                crate::widgets::set_keyboard_focus(true);
+            }
             // Copied out: a hook may add hooks or run the event loop.
             let hooks = KEY_HOOKS.with(|h| h.borrow().clone());
             if hooks.iter().any(|f| f()) {
                 return 1;
             }
+            // Enter (or Space) presses the focused button.
+            if matches!(key, Key::Enter | Key::KPEnter) || fltk::app::event_text() == " " {
+                if let Some(mut b) = fltk::app::focus().and_then(|w| fltk::button::Button::from_dyn_widget(&w)) {
+                    if b.has_visible_focus() && b.active_r() {
+                        crate::widgets::set_keyboard_focus(true);
+                        // Pressed, as a click would (dropdowns open on press).
+                        b.set_value(true);
+                        b.do_callback();
+                        b.set_value(false);
+                        return 1;
+                    }
+                }
+            }
             pass()
         }
         FL_PUSH => {
+            crate::widgets::set_keyboard_focus(false);
+            crate::widgets::cancel_autofocus();
             if crate::on_wayland() && crate::popover::press_outside(window) {
                 return 1;
             }

@@ -303,7 +303,10 @@ impl Theme {
         }
         app::set_font_size(self.font_size);
         app::set_font(self.font());
-        app::set_visible_focus(false);
+        // Keyboard focus on (Tab, arrows, Enter). Every HeroUI widget draws
+        // itself, so FLTK's dotted focus boxes never show; ours draw a ring
+        // while the keyboard is in use (widgets::focus_ring).
+        app::set_visible_focus(true);
         // Tooltips (hover details in bars and apps).
         fltk::misc::Tooltip::set_color(self.surface);
         fltk::misc::Tooltip::set_text_color(self.text);
