@@ -10,9 +10,14 @@ edition = "2021"
 fltk = "1.5"
 # Already built as part of fltk; used for a few raw calls on hot paths.
 fltk-sys = "1.5"
+# Open/save dialogs through the desktop portal (libdbus, which FLTK links
+# anyway).
+dbus = { version = "0.9", optional = true }
 
 [features]
-default = ["wayland"]
+default = ["wayland", "portal"]
+# Open/save dialogs through the desktop portal (file_dialog).
+portal = ["dep:dbus"]
 # Native Wayland (FLTK hybrid build): Wayland when available, X11 otherwise.
 wayland = ["fltk/use-wayland"]
 # Native panels, desktop widgets and notifications on Wayland

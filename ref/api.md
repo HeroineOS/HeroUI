@@ -45,6 +45,18 @@ desktop portals name it (exported with xdg-foreign). Compositors keep it above t
 and usually float and center it over it (HeroWM, sway). Needs feature `layer-shell` (the
 fltk-sys fork) and Wayland; ignored otherwise.
 
+Open/save dialogs: `heroui::file_dialog::open(Options { title, filters, folder, multiple,
+directory, name, accept }, Msg::Picked)` (and `save`) returns a `Task`; `Msg::Picked` gets
+the chosen paths (empty when cancelled). It asks the desktop portal, so the dialog is
+whatever the desktop uses (HeroPortal on HeroWM, GTK's or KDE's elsewhere), floating over
+the app's window; without a portal, FLTK's chooser. Feature `portal` (default).
+
+Keyboard: buttons, toggles, dropdowns and sliders take the focus with Tab, Shift+Tab and the
+arrows, show a ring while the keyboard is in use (a click hides it), and Enter or Space
+presses them. `.autofocus()` on an element gives it the focus when the window opens (a
+dialog's main button, so Enter accepts). Custom widgets: `widgets::focusable_button` and
+`widgets::focus_ring`.
+
 Features: `wayland` (default; hybrid Wayland/X11), `layer-shell`, `tokio`.
 
 Drawing model: retained. `view` runs once; after each batch of messages, bindings touch only
