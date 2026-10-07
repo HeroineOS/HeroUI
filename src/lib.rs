@@ -559,7 +559,8 @@ pub fn is_layer() -> bool {
 /// window (or needing a display); any other argument is an error. Call it
 /// first in `main`.
 pub fn simple_args(name: &str, version: &str, about: &str) {
-    for a in std::env::args().skip(1) {
+    // Every case exits, so only the first argument matters.
+    if let Some(a) = std::env::args().nth(1) {
         match a.as_str() {
             "--version" | "-V" => {
                 println!("{name} {version}");
