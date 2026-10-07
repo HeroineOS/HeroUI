@@ -23,7 +23,8 @@ thread_local! {
     static TICKING: Cell<bool> = const { Cell::new(false) };
 }
 
-type Job = Box<dyn FnMut(Instant) -> bool>;
+/// Called each frame with the animation clock (see [`clock`]).
+type Job = Box<dyn FnMut(f64) -> bool>;
 
 /// Set from the theme by [`crate::Theme::apply`].
 pub(crate) fn set_enabled(on: bool) {
@@ -67,6 +68,31 @@ thread_local! {
     static RUNNING: Cell<bool> = const { Cell::new(false) };
     static PACED: Cell<bool> = const { Cell::new(false) };
     static DEFERRED: Cell<bool> = const { Cell::new(false) };
+    /// The animation clock (seconds) when the jobs last ran, and the real
+    /// time then.
+    static CLOCK: Cell<(f64, Option<Instant>)> = const { Cell::new((0.0, None)) };
+}
+
+/// The animation clock, in seconds: real time, except that it moves at
+/// most a few frames' worth between two frames. When drawing stalls (the
+/// first frame after the system sat idle reads icons, fonts and code back
+/// from disk; a busy CPU), animations wait for it instead of jumping ahead
+/// past the frames nobody saw, so they always play from the start.
+/// Animations time themselves with this, not `Instant::now()`.
+pub fn clock() -> f64 {
+    clock_at(Instant::now())
+}
+
+fn clock_at(now: Instant) -> f64 {
+    let (at, last) = CLOCK.with(Cell::get);
+    let real = last.map_or(0.0, |l| now.saturating_duration_since(l).as_secs_f64());
+    at + real.min(max_step())
+}
+
+/// The most the clock moves between frames: three frames (50 ms at 60 Hz),
+/// so a device that only manages 20 fps still animates at full speed.
+fn max_step() -> f64 {
+    3.0 * frame_interval()
 }
 
 /// On Wayland, steps animations when the compositor reports a shown frame
@@ -125,9 +151,11 @@ fn run_jobs(now: Instant) -> bool {
         return true;
     }
     LAST_TICK.with(|t| t.set(Some(now)));
+    let at = clock_at(now);
+    CLOCK.with(|c| c.set((at, Some(now))));
     // Taken out while they run: a job may start other animations.
     let mut jobs = JOBS.with(|j| std::mem::take(&mut *j.borrow_mut()));
-    jobs.retain_mut(|job| job(now));
+    jobs.retain_mut(|job| job(at));
     let more = JOBS.with(|j| {
         let mut j = j.borrow_mut();
         jobs.append(&mut j);
@@ -155,10 +183,10 @@ pub fn animate_with(duration: Duration, ease: fn(f64) -> f64, mut frame: impl Fn
         frame(1.0);
         return;
     }
-    let start = Instant::now();
+    let start = clock();
     frame(0.0);
     schedule(Box::new(move |now| {
-        let t = (now.duration_since(start).as_secs_f64() / (duration.as_secs_f64() * slow())).min(1.0);
+        let t = ((now - start).max(0.0) / (duration.as_secs_f64() * slow())).min(1.0);
         frame(if t >= 1.0 { 1.0 } else { ease(t) });
         t < 1.0
     }));
@@ -171,9 +199,9 @@ pub fn each_frame(mut frame: impl FnMut(f64) -> bool + 'static) {
     if !enabled() {
         return;
     }
-    let mut last = Instant::now();
+    let mut last = clock();
     schedule(Box::new(move |now| {
-        let dt = now.duration_since(last).as_secs_f64().min(0.1) / slow();
+        let dt = (now - last).clamp(0.0, 0.1) / slow();
         last = now;
         frame(dt)
     }));
@@ -300,12 +328,12 @@ impl Tween {
         self.0.generation.set(generation);
         self.0.spring.set(None);
         let (from, me) = (self.get(), self.clone());
-        let mut last = (Instant::now(), from);
+        let mut last = (clock(), from);
         animate_with(duration, ease, move |t| {
             if me.0.generation.get() == generation {
                 let v = from + (target - from) * t;
-                let now = Instant::now();
-                let dt = now.duration_since(last.0).as_secs_f64();
+                let now = clock();
+                let dt = now - last.0;
                 me.0.velocity.set(if t >= 1.0 { 0.0 } else if dt > 0.0 { (v - last.1) / dt } else { me.0.velocity.get() });
                 last = (now, v);
                 me.0.value.set(v);

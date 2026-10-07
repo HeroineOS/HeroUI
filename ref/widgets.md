@@ -69,6 +69,9 @@ reference use (~1-2 ms per frame on a software renderer).
 Motion, the rules (everything in HeroUI follows them; follow them in custom widgets):
 - One frame clock (`anim`) drives every animation, at the theme's `frame_rate`; nothing
   ticks while nothing moves. `HEROUI_SLOW=10` runs all animations 10x slower, for checking.
+- Animations run on `anim::clock()`, not wall time: between two frames it moves at most three
+  frames' worth, so a stalled frame (the first one after the system sat idle and reads icons,
+  fonts and code back from disk) delays the animation instead of skipping it to the end.
 - Things that follow the user (indicators, knobs, widths, selection) use springs:
   `tween.spring_to(target, anim::Spring::SNAPPY | BOUNCY | SMOOTH | Spring { response, damping },
   redraw)`. A new target mid-move keeps the speed (only the first call's `redraw` is kept, so
