@@ -207,7 +207,17 @@ unsafe extern "C" fn dispatch(event: c_int, window: *mut c_void) -> c_int {
                     }
                 }
             }
-            pass()
+            // Focus moved (Tab, arrows): the widget it left drops its ring.
+            let before = fltk::app::focus();
+            let r = pass();
+            let after = fltk::app::focus();
+            if let Some(mut w) = before {
+                if after.as_ref().map(|a| a.as_widget_ptr()) != Some(w.as_widget_ptr()) {
+                    // With what's under it (widgets without a box don't clear).
+                    crate::widgets::repaint(&mut w);
+                }
+            }
+            r
         }
         FL_PUSH => {
             crate::widgets::set_keyboard_focus(false);

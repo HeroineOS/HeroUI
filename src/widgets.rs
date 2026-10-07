@@ -289,7 +289,7 @@ pub(crate) fn cancel_autofocus() {
 pub(crate) fn set_keyboard_focus(on: bool) {
     if KEYBOARD.with(|k| k.replace(on)) != on {
         if let Some(mut w) = fltk::app::focus() {
-            w.redraw();
+            repaint(&mut w);
         }
     }
 }
