@@ -58,6 +58,7 @@ impl App for Stress {
 }
 
 fn main() {
+    heroui::simple_args("stress", env!("CARGO_PKG_VERSION"), "HeroUI demo: many widgets updating at once.");
     let rows = std::env::args().nth(1).and_then(|a| a.parse().ok()).unwrap_or(200);
     let app = Stress { rows, values: vec![0.0; rows], ticks: 0 };
     heroui::run(app, Settings::new("stress").size(400, 800)).unwrap();

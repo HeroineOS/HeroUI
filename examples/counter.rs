@@ -43,5 +43,6 @@ impl App for Counter {
 }
 
 fn main() {
+    heroui::simple_args("heroui-counter", env!("CARGO_PKG_VERSION"), "HeroUI demo: a counter (the smallest app).");
     heroui::run(Counter::default(), Settings::new("Counter").size(280, 150)).unwrap();
 }

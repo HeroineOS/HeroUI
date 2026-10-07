@@ -67,6 +67,7 @@ impl App for Page {
 }
 
 fn main() {
+    heroui::simple_args("heroui-scrolling", env!("CARGO_PKG_VERSION"), "HeroUI demo: scrolling lists, with momentum on touch.");
     let page = Page { flags: vec![false; 12], items: vec!["Item 1".into(), "Item 2".into()], more: false };
     heroui::run(page, Settings::new("Scrolling").size(380, 420)).unwrap();
 }

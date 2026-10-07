@@ -130,6 +130,7 @@ impl App for SysMon {
 }
 
 fn main() {
+    heroui::simple_args("heroui-sysmon", env!("CARGO_PKG_VERSION"), "HeroUI demo: CPU and memory graphs.");
     let settings = Settings::desktop_widget("sysmon", 40, 40, 300, 280).class("heroui-sysmon");
     heroui::run(SysMon::new(), settings).unwrap();
 }

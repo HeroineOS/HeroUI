@@ -132,5 +132,6 @@ impl App for Demo {
 }
 
 fn main() {
+    heroui::simple_args("heroui-custom-widget", env!("CARGO_PKG_VERSION"), "HeroUI demo: a widget drawn by the app.");
     heroui::run(Demo::default(), Settings::new("Custom widgets").size(320, 240)).unwrap();
 }

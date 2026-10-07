@@ -252,6 +252,7 @@ fn download_step() -> Msg {
 }
 
 fn main() {
+    heroui::simple_args("heroui-showcase", env!("CARGO_PKG_VERSION"), "HeroUI demo: every widget, live theming.");
     let app = Showcase { volume: 40.0, wifi: true, color: 0x3ec99a, ..Default::default() };
     heroui::run(app, Settings::new("HeroUI showcase").size(460, 640).class("heroui-showcase")).unwrap();
 }

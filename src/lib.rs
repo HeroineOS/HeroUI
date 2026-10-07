@@ -554,6 +554,29 @@ pub fn is_layer() -> bool {
     LAYER.with(Cell::get)
 }
 
+/// Command line handling for programs that take no options: answers
+/// `--version` / `-V` and `--help` / `-h` and exits, without opening a
+/// window (or needing a display); any other argument is an error. Call it
+/// first in `main`.
+pub fn simple_args(name: &str, version: &str, about: &str) {
+    for a in std::env::args().skip(1) {
+        match a.as_str() {
+            "--version" | "-V" => {
+                println!("{name} {version}");
+                std::process::exit(0)
+            }
+            "--help" | "-h" => {
+                println!("{name} {version}\n{about}\n\nUsage: {name}\n  --version  print the version\n  --help     print this");
+                std::process::exit(0)
+            }
+            other => {
+                eprintln!("{name}: unknown argument {other:?} (see --help)");
+                std::process::exit(2)
+            }
+        }
+    }
+}
+
 /// Runs `f` for every key press before any widget sees it (the focused
 /// text field included); returning true consumes the key. For app-wide
 /// shortcuts: test `fltk::app::event_key()` / `event_state()` inside.

@@ -59,6 +59,7 @@ impl App for Panel {
 }
 
 fn main() {
+    heroui::simple_args("heroui-panel", env!("CARGO_PKG_VERSION"), "HeroUI demo: a panel (dock) at a screen edge.");
     let mut app = Panel::default();
     let _ = app.update(Msg::Tick);
     heroui::run(app, Settings::panel("panel", Edge::Top, 36).class("heroui-panel")).unwrap();
