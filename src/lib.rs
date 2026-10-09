@@ -77,7 +77,7 @@ pub use theme::Theme;
 
 pub mod prelude {
     pub use crate::widgets::*;
-    pub use crate::{embed, App, Ctx, Edge, Element, Settings, Subscription, Task, Theme, WindowKind};
+    pub use crate::{embed, App, Corner, Ctx, Edge, Element, Settings, Subscription, Task, Theme, WindowKind};
 }
 
 /// An application: its state is `Self`.
@@ -153,6 +153,57 @@ pub struct Settings {
     /// Another program's window this one belongs to, as desktop portals
     /// name it ("wayland:HANDLE"); see [`Settings::parent_window`].
     pub parent_window: Option<String>,
+    /// Kept in a corner (or the middle of an edge) of the screen, this far
+    /// from it; see [`Settings::corner`].
+    pub corner: Option<(Corner, i32)>,
+}
+
+/// Where on the screen a [`WindowKind::Notification`] window stays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Corner {
+    #[default]
+    TopRight,
+    TopLeft,
+    BottomRight,
+    BottomLeft,
+    /// The middle of the top edge.
+    Top,
+    /// The middle of the bottom edge.
+    Bottom,
+}
+
+thread_local! {
+    static CORNER: std::cell::Cell<Option<(Corner, i32)>> = const { std::cell::Cell::new(None) };
+}
+
+/// Resizes the app's window. One kept in a corner ([`Settings::corner`])
+/// stays in it: on Wayland the compositor keeps it there; on X11 it's
+/// moved to.
+pub fn resize_window(w: i32, h: i32) {
+    use fltk::prelude::*;
+    let Some(mut win) = fltk::app::first_window() else { return };
+    match CORNER.with(|c| c.get()).filter(|_| !is_layer()) {
+        Some((corner, margin)) => {
+            let (x, y) = corner_position(corner, margin, (w, h));
+            win.resize(x, y, w, h);
+        }
+        None => win.set_size(w, h),
+    }
+}
+
+/// Where a `size` window sits in `corner` of the first screen's work area.
+fn corner_position(corner: Corner, m: i32, (w, h): (i32, i32)) -> (i32, i32) {
+    let (sx, sy, sw, sh) = fltk::app::screen_work_area(0);
+    let x = match corner {
+        Corner::TopLeft | Corner::BottomLeft => sx + m,
+        Corner::TopRight | Corner::BottomRight => sx + sw - w - m,
+        Corner::Top | Corner::Bottom => sx + (sw - w) / 2,
+    };
+    let y = match corner {
+        Corner::TopLeft | Corner::TopRight | Corner::Top => sy + m,
+        _ => sy + sh - h - m,
+    };
+    (x, y)
 }
 
 /// Window types from the EWMH spec. On X11 (and XWayland compositors that
@@ -208,7 +259,16 @@ impl Settings {
             span: false,
             transparent: false,
             parent_window: None,
+            corner: None,
         }
+    }
+
+    /// Keeps the window in `corner` of the screen, `margin` px from its
+    /// edges (and from panels): notifications, OSDs. Use [`resize_window`]
+    /// to resize it in place.
+    pub fn corner(mut self, corner: Corner, margin: i32) -> Self {
+        self.corner = Some((corner, margin));
+        self
     }
 
     /// A panel/dock along `edge` of the screen, `thickness` px deep,
@@ -337,6 +397,12 @@ pub fn run<A: App>(mut app: A, mut settings: Settings) -> Result<(), fltk::prelu
         }
     }
 
+    if let Some((corner, margin)) = settings.corner {
+        CORNER.with(|c| c.set(Some((corner, margin))));
+        if !layer {
+            settings.position = Some(corner_position(corner, margin, settings.size));
+        }
+    }
     let (w, h) = settings.size;
     let mut win = Window::default().with_size(w, h).with_label(&settings.title);
     if let Some((x, y)) = settings.position.filter(|_| !layer) {

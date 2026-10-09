@@ -45,6 +45,12 @@ desktop portals name it (exported with xdg-foreign). Compositors keep it above t
 and usually float and center it over it (HeroWM, sway). Needs feature `layer-shell` (the
 fltk-sys fork) and Wayland; ignored otherwise.
 
+`.corner(Corner::TopRight, margin)` with `WindowKind::Notification`: the window stays in that
+corner of the screen (or the middle of the top/bottom edge: `Corner::Top`/`Bottom`), `margin`
+px from it and clear of panels, over windows, taking no keyboard (a layer-shell surface on
+Wayland; placed in the work area on X11). `heroui::resize_window(w, h)` resizes it in place
+(notification stacks growing and shrinking).
+
 Open/save dialogs: `heroui::file_dialog::open(Options { title, filters, folder, multiple,
 directory, name, accept }, Msg::Picked)` (and `save`) returns a `Task`; `Msg::Picked` gets
 the chosen paths (empty when cancelled). It asks the desktop portal, so the dialog is

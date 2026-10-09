@@ -97,7 +97,7 @@ Icons in custom drawing: `heroui::icons::draw(name, x, y, size, color) -> bool` 
 found, nothing drawn). Built-ins (`heroui::icons::BUILTIN`): apps, app, battery,
 battery-<0..100>[-charging], clock, cpu, memory, network-wired/-wireless/-offline, power,
 search, settings, terminal, volume-high/-low/-muted, network-wireless-<0..100> (signal), lock,
-check, refresh, microphone(-muted), bluetooth(-connected/-off), arrow-up/-down. Each (name, size, color) is rasterized
+check, refresh, bell(-off), microphone(-muted), bluetooth(-connected/-off), arrow-up/-down. Each (name, size, color) is rasterized
 once and kept at drawn size (~2 KB for 24 px); theme lookups are cached, misses too.
 `heroui::icons::find(name)` = the file path; `exists(name)`.
 

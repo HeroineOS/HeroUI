@@ -57,6 +57,7 @@ pub const BUILTIN: &[&str] = &[
 /// The body of a built-in icon (24×24 grid, 2 px round strokes), with
 /// `C` where its color goes.
 fn builtin_body(name: &str) -> Option<String> {
+    let bell = r#"<path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15z"/><path d="M10 20.5a2.2 2.2 0 0 0 4 0"/>"#;
     if let Some(rest) = name.strip_prefix("battery") {
         let (level, charging) = match rest.strip_suffix("-charging") {
             Some(r) => (r, true),
@@ -87,6 +88,8 @@ fn builtin_body(name: &str) -> Option<String> {
         "microphone-muted" => format!(r#"{mic}<path d="M4 4l16 16"/>"#),
         "refresh" => r#"<path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/>"#.into(),
         "clock" => r#"<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>"#.into(),
+        "bell" => bell.into(),
+        "bell-off" => format!(r#"{bell}<path d="M3.5 3.5l17 17"/>"#),
         "cat" => r#"<path d="M4.5 3.5l4.2 4.3a9 9 0 0 1 6.6 0l4.2-4.3v9.5a7.5 7.5 0 0 1-15 0z"/><circle cx="9.3" cy="12.6" r="1.1" fill="C" stroke="none"/><circle cx="14.7" cy="12.6" r="1.1" fill="C" stroke="none"/><path d="M11 15.6l1 .8 1-.8"/>"#.into(),
         "brightness" => r#"<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>"#.into(),
         "cpu" => r#"<rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9.5" y="9.5" width="5" height="5" rx="1" fill="C" stroke="none"/><path d="M9.5 2.5v3M14.5 2.5v3M9.5 18.5v3M14.5 18.5v3M2.5 9.5h3M2.5 14.5h3M18.5 9.5h3M18.5 14.5h3"/>"#.into(),
